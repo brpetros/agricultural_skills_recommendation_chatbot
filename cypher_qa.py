@@ -1,7 +1,7 @@
 from skills_graph import graph 
 from llm import llm
 from langchain_neo4j import GraphCypherQAChain
-from langchain.prompts.prompt import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 
 
 cypher_prompt = PromptTemplate.from_template("""

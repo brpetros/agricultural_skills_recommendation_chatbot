@@ -1,8 +1,8 @@
 from langchain_core.prompts import ChatPromptTemplate
-from langchain.schema import StrOutputParser
-from langchain.tools import Tool
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.tools import Tool
 from langchain_neo4j import Neo4jChatMessageHistory
-from langchain.agents import AgentExecutor, create_react_agent
+from langchain_classic.agents import  create_react_agent, AgentExecutor
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from utils import get_session_id
 from skills_graph import graph
