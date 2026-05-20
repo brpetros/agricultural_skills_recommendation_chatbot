@@ -8,19 +8,13 @@ Follow the steps below to run the application locally.
 
 ## 1. Clone the Repository
 
-```bash
-git clone <repository-url>
-```
 
 ---
 
 ## 2. Access the Project Directory
 
-Open Command Prompt (CMD) and navigate to the project folder:
+Open Command Prompt (CMD) and navigate to the project folder.
 
-```bash
-cd <repository-folder>
-```
 
 ---
 
@@ -55,7 +49,7 @@ pip install -r requirements.txt
 Rename:
 
 ```text
-.streamlit/secrets_template.toml
+.streamlit/secrets.toml.example
 ```
 
 to:
