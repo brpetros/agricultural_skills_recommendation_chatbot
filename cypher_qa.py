@@ -10,7 +10,7 @@ cypher_prompt = PromptTemplate.from_template("""
 
     Use only the provided relationship types and properties in the schema.
     Do not use any other relationship types or properties that are not provided.
-
+    If the question cannot be answered using this schema, return "This question cannot be answered based on the available data."
     Do not return entire nodes or embedding properties.
     
     Schema:
@@ -28,5 +28,6 @@ cypher_qa = GraphCypherQAChain.from_llm(
     graph=graph,
     verbose=True,
     cypher_prompt=cypher_prompt,
+    #return_intermediate_steps=True,
     allow_dangerous_requests=True, # This allows the chain to execute any Cypher query, including those that modify the database. Use with caution!
 )

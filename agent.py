@@ -9,6 +9,48 @@ from skills_graph import graph
 from llm import llm
 from langchain_core.prompts import PromptTemplate
 from cypher_qa import cypher_qa
+import json
+from datetime import datetime
+from pprint import pprint
+
+def serialize_steps(steps):
+    clean = []
+
+    for action, observation in steps:
+
+        clean.append({
+            "tool": getattr(action, "tool", None),
+            "tool_input": getattr(action, "tool_input", None),
+            "log": getattr(action, "log", None),
+
+            # IMPORTANT: your tool returns dict → store it safely
+            "result": observation.get("result") if isinstance(observation, dict) else observation,
+
+            "query": observation.get("query") if isinstance(observation, dict) else None
+        })
+
+    return clean
+
+
+def store_execution(user_input, response, session_id):
+    raw_steps = response["intermediate_steps"]
+
+    # flatten one level
+    flat_steps = raw_steps[0] if raw_steps and isinstance(raw_steps[0], list) else raw_steps
+    
+    record = {
+        "timestamp":str(datetime.now()),
+        "user_input":user_input,
+        "session_id":session_id,
+        "intermediate_steps":serialize_steps(flat_steps),
+        "answer":response['output']
+    }
+    pprint(f"----record----\n{record}")
+
+    with open("execution_logs.jsonl","a",encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    
 
 def get_memory(session_id):
     return Neo4jChatMessageHistory(session_id=session_id, graph=graph)
@@ -22,17 +64,16 @@ chat_prompt = ChatPromptTemplate.from_messages(
 
 agricultural_chat = chat_prompt | llm | StrOutputParser()
 
-def simple_agricultural_chat():
-    return agricultural_chat.invoke
+
 tools = [
     Tool.from_function(
         name="general_chat",
         description="For general chat related to agriculture not covered by other tools",
-        func=simple_agricultural_chat()
+        func=agricultural_chat.invoke
     ),
     Tool.from_function(
         name="graph_information",
-        description="Provide information related to agricultural skills, occupations and jobs using Cypher.",
+        description="Use this tool to provide information related to agricultural skills, occupations and jobs and their relations. Input should always be natural languade only.",
         func=cypher_qa
     )
 ]
@@ -59,7 +100,9 @@ agent_prompt = PromptTemplate.from_template(
     Action Input: the input to the action
     Observation: the result of the action
     ```
-    When you have a response to say to the Human, or if you do not need to use a tool, you MUST use the format:
+    If you have context, you have to give a response. 
+    If you have no context provided by the tools, just say that you don't know.
+    To give the final answer, you have to use the following format.
 
     ```
     Thought: Do I need to use a tool? No
@@ -81,7 +124,8 @@ agent = create_react_agent(llm, tools, agent_prompt)
 agent_executor = AgentExecutor(
     agent=agent,
     tools=tools,
-    verbose=True
+    verbose=True,
+    return_intermediate_steps=True
     )
 
 chat_agent = RunnableWithMessageHistory(
@@ -101,5 +145,7 @@ def generate_response(user_input):
     response = chat_agent.invoke(
         {"input": user_input},
         {"configurable": {"session_id": get_session_id()}},)
+    
+    store_execution(user_input, response, get_session_id()) 
 
     return response['output']
