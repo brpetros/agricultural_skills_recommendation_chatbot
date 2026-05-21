@@ -10,8 +10,6 @@ llm = ChatGoogleGenerativeAI(
     model=st.secrets["GEMINI_MODEL"],
 )
 
-# Create the Embedding model
-
 embeddings = OpenAIEmbeddings(
     model="text-embedding-ada-002"
 )

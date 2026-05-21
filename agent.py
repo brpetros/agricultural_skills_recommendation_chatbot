@@ -40,7 +40,6 @@ def create_record(user_input, response, session_id):
     flat_steps = raw_steps[0] if raw_steps and isinstance(raw_steps[0], list) else raw_steps
     
     record = {
-        "role":"assistant",
         "timestamp":str(datetime.now()),
         "user_input":user_input,
         "session_id":session_id,

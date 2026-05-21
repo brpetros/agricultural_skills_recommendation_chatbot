@@ -18,50 +18,70 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-job_title_vector = Neo4jVector.from_existing_index(
-    embeddings,
-    graph=graph,
-    index_name="jobTitleEmbeddings",
-    embedding_node_property="titleEmbedding",
-    text_node_property="title"
-)
+job_retrieval_query="""
+    RETURN
+    node.title AS text,
+    score,
+    {
+        job_description: node.description,
 
-job_description_vector = Neo4jVector.from_existing_index(
-    embeddings,
-    graph=graph,
-    index_name="jobDescriptionEmbeddings",
-    embedding_node_property="descriptionEmbedding",
-    text_node_property="description"
-)
+        occupations: [
+            (node)-[:HAS_OCCUPATION]->(occupation)
+            | [occupation.label, occupation.description]
+        ],
 
-occupation_label_vector = Neo4jVector.from_existing_index(
-    embeddings,
-    graph=graph,
-    index_name="occupationLabelEmbeddings",
-    embedding_node_property="labelEmbedding",
-    text_node_property="label"
-)
+        skills: [
+            (node)-[:REQUIRES_SKILL]->(skill)
+            | [skill.label, skill.description]
+        ],
 
-occupation_description_vector = Neo4jVector.from_existing_index(
-    embeddings,
-    graph=graph,
-    index_name="occupationDescriptionsEmbeddings",
-    embedding_node_property="descriptionEmbedding",
-    text_node_property="description"
-)
+        location: [
+            (node)-[:LOCATED_AT]->(region)
+            | region.location
+        ],
 
-skill_label_vector = Neo4jVector.from_existing_index(
-    embeddings,
-    graph=graph,
-    index_name="skillLabelEmbeddings",
-    embedding_node_property="labelEmbedding",
-    text_node_property="label",
-    retrieval_query="""
+        source: [
+            (node)-[:UPLOADED_AT]->(site)
+            | site.source
+        ]
+    } AS metadata
+    """
+
+occupation_retrieval_query="""
     RETURN
     node.label AS text,
     score,
     {
-        description: node.description,
+        occupation_description: node.description,
+
+        broader_occupations: [
+            (occupation)-[:BROADER_THAN]->(node)
+            | [occupation.label, occupation.description]
+        ],
+
+        smaller_occupations: [
+            (node)-[:BROADER_THAN]->(occupation)
+            | [occupation.label, occupation.description]
+        ],
+
+        skills: [
+            (node)-[:HAS_OPTIONAL_SKILL|HAS_ESSENTIAL_SKILL]->(skill)
+            | [skill.label, skill.description]
+        ],
+
+        jobs: [
+            (job)-[:HAS_OCCUPATION]->(node)
+            | [job.title, job.description]
+        ]
+    } AS metadata
+    """
+
+skill_retrieval_query="""
+    RETURN
+    node.label AS text,
+    score,
+    {
+        skill_description: node.description,
 
         broader_skills: [
             (skill)-[:BROADER_THAN]->(node)
@@ -79,11 +99,55 @@ skill_label_vector = Neo4jVector.from_existing_index(
         ],
 
         jobs: [
-            (job)-[:REQUIRES]->(node)
+            (job)-[:REQUIRES_SKILL]->(node)
             | [job.title, job.description]
         ]
     } AS metadata
     """
+
+job_title_vector = Neo4jVector.from_existing_index(
+    embeddings,
+    graph=graph,
+    index_name="jobTitleEmbeddings",
+    embedding_node_property="titleEmbedding",
+    text_node_property="title",
+    retrieval_query=job_retrieval_query
+)
+
+job_description_vector = Neo4jVector.from_existing_index(
+    embeddings,
+    graph=graph,
+    index_name="jobDescriptionEmbeddings",
+    embedding_node_property="descriptionEmbedding",
+    text_node_property="description",
+    retrieval_query=job_retrieval_query
+)
+
+occupation_label_vector = Neo4jVector.from_existing_index(
+    embeddings,
+    graph=graph,
+    index_name="occupationLabelEmbeddings",
+    embedding_node_property="labelEmbedding",
+    text_node_property="label",
+    retrieval_query=occupation_retrieval_query
+)
+
+occupation_description_vector = Neo4jVector.from_existing_index(
+    embeddings,
+    graph=graph,
+    index_name="occupationDescriptionsEmbeddings",
+    embedding_node_property="descriptionEmbedding",
+    text_node_property="description",
+    retrieval_query=occupation_retrieval_query
+)
+
+skill_label_vector = Neo4jVector.from_existing_index(
+    embeddings,
+    graph=graph,
+    index_name="skillLabelEmbeddings",
+    embedding_node_property="labelEmbedding",
+    text_node_property="label",
+    retrieval_query=skill_retrieval_query
 )
 
 skill_description_vector = Neo4jVector.from_existing_index(
@@ -91,17 +155,11 @@ skill_description_vector = Neo4jVector.from_existing_index(
     graph=graph,
     index_name="skillDescriptionEmbeddings",
     embedding_node_property="descriptionEmbedding",
-    text_node_property="description"
+    text_node_property="description",
+    retrieval_query=skill_retrieval_query
 )
 
 
-
-result = skill_label_vector.similarity_search("breed animals",k=1)
-#print(result)
-
-for doc in result:
-    print(f"description: {doc.metadata['description']}")
-    print(f"Title: {doc.page_content}\n")
 
 
 question_answer_chain = create_stuff_documents_chain(llm, prompt)
