@@ -28,6 +28,6 @@ cypher_qa = GraphCypherQAChain.from_llm(
     graph=graph,
     verbose=True,
     cypher_prompt=cypher_prompt,
-    #return_intermediate_steps=True,
+    return_intermediate_steps=True,
     allow_dangerous_requests=True, # This allows the chain to execute any Cypher query, including those that modify the database. Use with caution!
 )

@@ -12,6 +12,7 @@ from cypher_qa import cypher_qa
 import json
 from datetime import datetime
 from pprint import pprint
+import vectors
 
 def serialize_steps(steps):
     clean = []
@@ -32,25 +33,28 @@ def serialize_steps(steps):
     return clean
 
 
-def store_execution(user_input, response, session_id):
+def create_record(user_input, response, session_id):
     raw_steps = response["intermediate_steps"]
 
     # flatten one level
     flat_steps = raw_steps[0] if raw_steps and isinstance(raw_steps[0], list) else raw_steps
     
     record = {
+        "role":"assistant",
         "timestamp":str(datetime.now()),
         "user_input":user_input,
         "session_id":session_id,
         "intermediate_steps":serialize_steps(flat_steps),
-        "answer":response['output']
+        "response":response['output']
     }
     pprint(f"----record----\n{record}")
 
     with open("execution_logs.jsonl","a",encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
     
+    return record
+
+
 
 def get_memory(session_id):
     return Neo4jChatMessageHistory(session_id=session_id, graph=graph)
@@ -67,15 +71,25 @@ agricultural_chat = chat_prompt | llm | StrOutputParser()
 
 tools = [
     Tool.from_function(
-        name="general_chat",
-        description="For general chat related to agriculture not covered by other tools",
-        func=agricultural_chat.invoke
-    ),
-    Tool.from_function(
         name="graph_information",
         description="Use this tool to provide information related to agricultural skills, occupations and jobs and their relations. Input should always be natural languade only.",
         func=cypher_qa
-    )
+    ),
+    Tool.from_function(
+        name="occupation_label_match",
+        description="Use this tool to find information about similar occupations based on the occupation's label.",
+        func=vectors.get_occupation_label
+    ),
+    Tool.from_function(
+        name="skill_label_match",
+        description="Use this tool to find information about similar skills based on the skill's label.",
+        func=vectors.get_skill_label
+    ),
+    Tool.from_function(
+        name="job_title_match",
+        description="Use this tool to find information about similar job offers based on the skill's label.",
+        func=vectors.get_job_title
+    ),
 ]
 
 # prompt template that give the agent instructions related to the required train of thoughts.
@@ -146,6 +160,6 @@ def generate_response(user_input):
         {"input": user_input},
         {"configurable": {"session_id": get_session_id()}},)
     
-    store_execution(user_input, response, get_session_id()) 
+    response_record = create_record(user_input, response, get_session_id()) 
 
-    return response['output']
+    return response["output"]
