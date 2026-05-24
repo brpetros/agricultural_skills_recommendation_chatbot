@@ -13,8 +13,10 @@ import json
 from datetime import datetime
 from pprint import pprint
 import vectors
+from typing import List, Dict
 
 def serialize_steps(steps):
+    """Serialization of the internal steps the agent took before returning the result"""
     clean = []
 
     for action, observation in steps:
@@ -34,6 +36,7 @@ def serialize_steps(steps):
 
 
 def create_record(user_input, response, session_id):
+    """Saving of the output along with metadata"""
     raw_steps = response["intermediate_steps"]
 
     # flatten one level
@@ -56,8 +59,10 @@ def create_record(user_input, response, session_id):
 
 
 def get_memory(session_id):
+    """Returns the chat's memory by the graph"""
     return Neo4jChatMessageHistory(session_id=session_id, graph=graph)
 
+"""Template for the prompt of the simple agricultural chat (not used any more at this point)"""
 chat_prompt = ChatPromptTemplate.from_messages(
     [
         ("system","You are an expert in agriculture. You provide recommendations about skills that are related to agriculture."),
@@ -68,6 +73,7 @@ chat_prompt = ChatPromptTemplate.from_messages(
 agricultural_chat = chat_prompt | llm | StrOutputParser()
 
 
+"""Tools for the agent to choose from."""
 tools = [
     Tool.from_function(
         name="graph_information",
@@ -91,8 +97,10 @@ tools = [
     ),
 ]
 
-# prompt template that give the agent instructions related to the required train of thoughts.
-# gives the agent the available tools options and instructs on how to choose one of the tools.
+"""
+prompt template that gives the agent instructions related to the required train of thoughts.
+gives the agent the available tools options and instructs on how to choose one of the tools.
+"""
 agent_prompt = PromptTemplate.from_template(
     """
     You are an expert in agriculture, providing informations about Occupations, Jobs and Skills related to agriculture. 

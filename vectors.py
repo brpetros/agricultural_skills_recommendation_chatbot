@@ -2,8 +2,12 @@ from llm import embeddings, llm
 from skills_graph import graph
 from langchain_neo4j import Neo4jVector
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.documents import Document
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_classic.chains import create_retrieval_chain
+from pprint import pprint
+from typing import List, Dict, TypedDict
+import json
 
 instructions = (
     "Use the given context to answer the question."
@@ -75,6 +79,15 @@ occupation_retrieval_query="""
         ]
     } AS metadata
     """
+
+occupation_retrieval_query_1 = """
+    RETURN
+    node.label AS text,
+    score,
+    {
+        occupation_description: node.description
+    } AS metadata
+"""
 
 skill_retrieval_query="""
     RETURN
@@ -170,20 +183,32 @@ job_title_retriever = create_retrieval_chain(
 )
 
 occupation_label_retriever = create_retrieval_chain(
-     occupation_label_vector.as_retriever(),
+     occupation_label_vector.as_retriever(
+          search_kwargs={"k":2}
+     ),
      question_answer_chain
 )
 
+# retriever that only returns the context when invoked, not the final LLM answer
+occupation_retriever = occupation_label_vector.as_retriever()
+
 skill_label_retriever = create_retrieval_chain(
-     skill_label_vector.as_retriever(),
+     skill_label_vector.as_retriever(
+          search_kwargs={"k":2}
+     ),
      question_answer_chain
 )
 
 def get_job_title(input):
      return job_title_retriever.invoke({"input": input})
 
-def get_occupation_label(input):
-     return occupation_label_retriever.invoke({"input":input})
+def get_occupations_by_label(input):
+     #return occupation_label_retriever.invoke({"input":input})
+     return occupation_label_vector.similarity_search_with_score(query=input,k=2)
 
 def get_skill_label(input):
      return skill_label_retriever.invoke({"input":input})
+
+
+
+

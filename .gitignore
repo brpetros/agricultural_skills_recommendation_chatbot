@@ -1,4 +1,5 @@
-lang_graph_test.py
+langgraph_tests/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
