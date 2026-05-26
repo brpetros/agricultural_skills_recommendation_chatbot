@@ -8,53 +8,8 @@ from utils import get_session_id
 from skills_graph import graph
 from llm import llm
 from langchain_core.prompts import PromptTemplate
-from cypher_qa import cypher_qa
-import json
-from datetime import datetime
-from pprint import pprint
-import vectors
-from typing import List, Dict
-
-def serialize_steps(steps):
-    """Serialization of the internal steps the agent took before returning the result"""
-    clean = []
-
-    for action, observation in steps:
-
-        clean.append({
-            "tool": getattr(action, "tool", None),
-            "tool_input": getattr(action, "tool_input", None),
-            "log": getattr(action, "log", None),
-
-            # IMPORTANT: your tool returns dict → store it safely
-            "result": observation.get("result") if isinstance(observation, dict) else observation,
-
-            "query": observation.get("query") if isinstance(observation, dict) else None
-        })
-
-    return clean
-
-
-def create_record(user_input, response, session_id):
-    """Saving of the output along with metadata"""
-    raw_steps = response["intermediate_steps"]
-
-    # flatten one level
-    flat_steps = raw_steps[0] if raw_steps and isinstance(raw_steps[0], list) else raw_steps
-    
-    record = {
-        "timestamp":str(datetime.now()),
-        "user_input":user_input,
-        "session_id":session_id,
-        "intermediate_steps":serialize_steps(flat_steps),
-        "response":response['output']
-    }
-    pprint(f"----record----\n{record}")
-
-    with open("execution_logs.jsonl","a",encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    
-    return record
+from context_retrieval.cypher_construction import cypher_qa
+import context_retrieval.vectors as vectors
 
 
 
@@ -103,7 +58,7 @@ gives the agent the available tools options and instructs on how to choose one o
 """
 agent_prompt = PromptTemplate.from_template(
     """
-    You are an expert in agriculture, providing informations about Occupations, Jobs and Skills related to agriculture. 
+    You are an expert in agriculture, providing information about Occupations, Jobs and Skills related to agriculture. 
     Be accurate and return as much information as possible.
     Do not answer any questions that are not relevant to agricultural skills, occupations and jobs.
     Do not answer any questions using your pre-trained knowledge. Use only the information provided by the context.
@@ -167,6 +122,5 @@ def generate_response(user_input):
         {"input": user_input},
         {"configurable": {"session_id": get_session_id()}},)
     
-    response_record = create_record(user_input, response, get_session_id()) 
 
     return response["output"]

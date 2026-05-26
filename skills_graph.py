@@ -7,3 +7,5 @@ graph = graph = Neo4jGraph(
     password=st.secrets["NEO4J_PASSWORD"],
     database=st.secrets["NEO4J_DATABASE"],
 )
+
+print(graph.get_structured_schema) 

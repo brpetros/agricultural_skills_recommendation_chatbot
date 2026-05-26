@@ -1,0 +1,39 @@
+{
+    "user_query": "I want information about the following occupations: Pig Breed, Meat Preparations Operator ",
+    "occupations": [
+        [
+            {
+                "label": "pig breeder",
+                "description": "Pig breeders oversee the production and day-to-day care of pigs. They maintain the health and welfare of pigs.",
+                "id": "http://data.europa.eu/esco/occupation/ea3db1b3-7c03-4306-9e3d-7e20eb7f1826",
+                "concept_type": "Occupation",
+                "score": 0.9418335556983948
+            },
+            {
+                "label": "poultry breeder",
+                "description": "Poultry breeders oversee the production and day-to-day care of poultry. They maintain the health and welfare of poultry.",
+                "id": "http://data.europa.eu/esco/occupation/d20fd82a-9d99-4335-ad83-87484e297a46",
+                "concept_type": "Occupation",
+                "score": 0.9310206770896912
+            }
+        ],
+        [
+            {
+                "label": "meat preparations operator",
+                "description": "Meat preparations operators prepare fresh meat with ingredients such as spices, herbs or additives in order to make ready-for-sale meat preparations.",
+                "id": "http://data.europa.eu/esco/occupation/7e33b166-4a6d-40f3-8048-83b3a9d3ef49",
+                "concept_type": "Occupation",
+                "score": 0.989788830280304
+            },
+            {
+                "label": "prepared meat operator",
+                "description": "Prepared meat operators process meat either by hand or using meat machines such as meat grinding, crushing or mixing machines. They perform preservation processes such as pasteurising, salting, drying, freeze-drying, fermenting and smoking. Prepared meat operators strive to keep meat free from germs and other health risks for a longer period than fresh meat.",
+                "id": "http://data.europa.eu/esco/occupation/84dfc210-db07-4a83-87fe-d6131907ea83",
+                "concept_type": "Occupation",
+                "score": 0.9732548594474792
+            }
+        ]
+    ],
+    "jobs": [],
+    "skills": []
+}
