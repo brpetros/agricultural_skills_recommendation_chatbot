@@ -1,80 +1,154 @@
 from skills_graph import graph 
 from llm import llm
 from langchain_neo4j import GraphCypherQAChain
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
+from context_retrieval.schema import RetrievedEntitiesSchema
 
-cypher_prompt = PromptTemplate.from_template("""
-    You are a neo4j graph developer translating user questions into Cypher to answer questions about agricultural skills and their relation to the job market.
-    Convert the user's question based on the schema. 
 
-    Use only the provided relationship types and properties in the schema.
-    Do not use any other relationship types or properties that are not provided.
-    If the question cannot be answered using this schema, return "This question cannot be answered based on the available data."
-    Do not return entire nodes or embedding properties.
 
-                                             
-    Schema:
-    {schema}
-
-    Question:
-    {question}
-
-    Cypher Query:
-    """
-)
-
-cypher_prompt = PromptTemplate.from_template(
-    """
+original_cypher_prompt = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        """
         You are an expert Neo4j Cypher query generator.
-        Your task is to convert a natural language question into a valid, safe Cypher query.
 
-        ---
+        Your task is to convert a natural language question into a valid, safe Cypher query, based on the given schema and the entities.
 
+        ONLY generate READ-ONLY Cypher queries:
+        - Allowed: MATCH, WHERE, RETURN, WITH, OPTIONAL MATCH, ORDER BY, LIMIT
+        - NOT allowed: CREATE, DELETE, MERGE, SET, DROP, CALL, or any write operation
+
+        STRICT REQUIREMENTS:
+        - Output ONLY the corrected Cypher query
+        - Do NOT explain anything
+        - Ensure all labels, relationships, and properties exist in the schema
+        - Do NOT make the query return whole nodes when they include embedding properties like titleEmbedding, labelEmbedding or descriptionEmbedding. Chose the 
+        node properties that do not contain embeddings.
+        - Prefer entity IDs when available
+        - If unsure, simplify the query instead of guessing
+        """
+    ),
+    (
+        "human",
+        """
         # GRAPH SCHEMA
-        You are working with the following graph schema:
-
         {schema}
 
-        ---
-
-        # EXTRACTED ENTITIES (already grounded to the graph when possible)
-
-        These entities were extracted from the user question and correspond to nodes in the graph:
-
+        # EXTRACTED ENTITIES
         {entities}
 
-        Use entity IDs when available for precise matching.
+        # USER QUESTION
+        {question}
+        """
+    )
+])
+# prompt to retry cypher generation
 
-        ---
+retry_cypher_prompt = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        """
+        You are an expert Neo4j Cypher query generator specialized in correcting failed queries.
+
+        Your task is to FIX broken Cypher queries and produce correct, executable, and SAFE READ-ONLY Cypher queries.
+
+        ONLY READ operations are allowed.
+
+        Allowed clauses:
+        - MATCH
+        - OPTIONAL MATCH
+        - WHERE
+        - WITH
+        - RETURN
+        - ORDER BY
+        - LIMIT
+
+        Forbidden operations and clauses:
+        - CREATE
+        - MERGE
+        - DELETE
+        - SET
+        - REMOVE
+        - DROP
+        - CALL
+        - LOAD CSV
+        - APOC procedures
+        - db.*
+        - schema modifications
+        - writes of any kind
+
+        STRICT REQUIREMENTS:
+        - Output ONLY the corrected Cypher query
+        - Do NOT explain anything
+        - Ensure all labels, relationships, and properties exist in the schema
+        - Do NOT make the query return whole nodes when they include embedding properties like titleEmbedding, labelEmbedding or descriptionEmbedding. Chose the 
+        node properties that do not contain embeddings.
+        - Prefer entity IDs when available
+        - If unsure, simplify the query instead of guessing
+        """
+    ),
+    (
+        "human",
+        """
+        # GRAPH SCHEMA
+        {schema}
+
+        # EXTRACTED ENTITIES
+        {entities}
 
         # USER QUESTION
         {question}
 
-        # RULES
-        Output ONLY the cypher query.
-        ONLY generate READ-ONLY Cypher queries:
-        - Allowed: MATCH, WHERE, RETURN, WITH, OPTIONAL MATCH, ORDER BY, LIMIT
-        - NOT allowed: CREATE, DELETE, MERGE, SET, DROP, CALL, or any write operation
-        Prefer using entity IDs when provided
-    """
-)
+        # PREVIOUS FAILED CYPHER QUERY
+        {previous_cypher}
 
-cypher_qa = GraphCypherQAChain.from_llm(
-    llm=llm,
-    graph=graph,
-    verbose=True,
-    cypher_prompt=cypher_prompt,
-    return_intermediate_steps=True,
-    allow_dangerous_requests=True, # This allows the chain to execute any Cypher query, including those that modify the database. Use with caution!
-)
+        # ERROR MESSAGE FROM NEO4J
+        {error}
+
+        # TASK
+        Analyze why the query failed and generate a corrected Cypher query.
+
+        Possible failure causes include:
+        - syntax issues
+        - invalid labels
+        - invalid relationships
+        - invalid properties
+        - incorrect filtering
+        - incorrect entity usage
+        - schema mismatch
+        - overconstrained conditions
+
+        Correction strategy:
+        - fix syntax issues
+        - align query with schema
+        - correct labels/relationships/properties
+        - simplify overly complex queries
+        - relax filters slightly if appropriate
+        - use grounded entity IDs when available
+
+        Return ONLY the corrected Cypher query.
+        """
+    )
+])
 
 
-cypher_chain = cypher_prompt | llm
+cypher_chain = original_cypher_prompt | llm
+retry_cypher_chain = retry_cypher_prompt | llm
 
-#@tool
-def get_cypher(question:str, entities):
+def get_cypher(question:str, entities:RetrievedEntitiesSchema, retry:bool, previous_cypher:str="", error:str=""):
     """generates cypher based on the graph schema and the user's question"""
+    if retry:
+        return retry_cypher_chain.invoke(
+            {
+                "previous_cypher":previous_cypher,
+                "error":error,
+                "schema":graph.get_structured_schema,
+                "entities":entities,
+                "question":question
+            }
+        )
+    
     return cypher_chain.invoke(
         {
             "schema":graph.get_structured_schema,
@@ -83,3 +157,4 @@ def get_cypher(question:str, entities):
         }
     )
      
+

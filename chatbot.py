@@ -1,6 +1,6 @@
 import streamlit as st
 from utils import write_message
-from agent import generate_response
+from agent_graph import generate_response
 from datetime import datetime
 
 st.set_page_config("Skill Recommender",page_icon=":seedling:")
@@ -17,7 +17,7 @@ def handle_submit(message):
     # Handle the response
     with st.spinner('Thinking...'):
         # Call the agent
-        response= generate_response(message)
+        response = generate_response(message)
         write_message('assistant', response)
 
 
