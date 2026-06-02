@@ -1,7 +1,7 @@
 from skills_graph import graph 
 from llm import llm
 from langchain_neo4j import GraphCypherQAChain
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
 from context_retrieval.schema import RetrievedEntitiesSchema
 
@@ -13,31 +13,36 @@ original_cypher_prompt = ChatPromptTemplate.from_messages([
         """
         You are an expert Neo4j Cypher query generator.
 
-        Your task is to convert a natural language question into a valid, safe Cypher query, based on the given schema and the entities.
+        Your task is to convert a natural language user question into a valid, safe Cypher query, based on the given schema and the entities.
 
         ONLY generate READ-ONLY Cypher queries:
         - Allowed: MATCH, WHERE, RETURN, WITH, OPTIONAL MATCH, ORDER BY, LIMIT
         - NOT allowed: CREATE, DELETE, MERGE, SET, DROP, CALL, or any write operation
 
-        STRICT REQUIREMENTS:
-        - Output ONLY the corrected Cypher query
-        - Do NOT explain anything
-        - Ensure all labels, relationships, and properties exist in the schema
-        - Do NOT make the query return whole nodes when they include embedding properties like titleEmbedding, labelEmbedding or descriptionEmbedding. Chose the 
-        node properties that do not contain embeddings.
-        - Prefer entity IDs when available
-        - If unsure, simplify the query instead of guessing
-        """
-    ),
-    (
-        "human",
-        """
         # GRAPH SCHEMA
         {schema}
 
         # EXTRACTED ENTITIES
         {entities}
 
+        STRICT REQUIREMENTS:
+        - The cypher search query should be based only on the information from the retrieved entities that are relevant to the user's query. 
+        - Each entity contains the original user's input, which was used for the entity to be retrieved. Use this to relate the user's question with the retrieved entities.
+        - Prefer entity IDs when available
+        - Output ONLY the corrected Cypher query
+        - Do NOT explain anything
+        - Ensure all labels, relationships, and properties exist in the schema
+        - If the query contains references such as 'it', 'they', 'that occupation', 'the previous job', 'the last skill', use the conversation history to resolve those references.
+        - Do NOT make the query return whole nodes when they include embedding properties like titleEmbedding, labelEmbedding or descriptionEmbedding. Chose the 
+        node properties that do not contain embeddings.
+        - Prefer entity IDs when available
+        - If unsure, simplify the query instead of guessing
+        """
+    ),
+    MessagesPlaceholder("history"),
+    (
+        "human",
+        """
         # USER QUESTION
         {question}
         """
@@ -78,32 +83,17 @@ retry_cypher_prompt = ChatPromptTemplate.from_messages([
         - schema modifications
         - writes of any kind
 
-        STRICT REQUIREMENTS:
-        - Output ONLY the corrected Cypher query
-        - Do NOT explain anything
-        - Ensure all labels, relationships, and properties exist in the schema
-        - Do NOT make the query return whole nodes when they include embedding properties like titleEmbedding, labelEmbedding or descriptionEmbedding. Chose the 
-        node properties that do not contain embeddings.
-        - Prefer entity IDs when available
-        - If unsure, simplify the query instead of guessing
-        """
-    ),
-    (
-        "human",
-        """
         # GRAPH SCHEMA
         {schema}
 
         # EXTRACTED ENTITIES
         {entities}
 
-        # USER QUESTION
-        {question}
 
         # PREVIOUS FAILED CYPHER QUERY
         {previous_cypher}
 
-        # ERROR MESSAGE FROM NEO4J
+        # ERROR MESSAGE 
         {error}
 
         # TASK
@@ -128,6 +118,25 @@ retry_cypher_prompt = ChatPromptTemplate.from_messages([
         - use grounded entity IDs when available
 
         Return ONLY the corrected Cypher query.
+        
+        STRICT REQUIREMENTS:
+        - The cypher search query should be based only on the information from the retrieved entities
+        - Prefer entity IDs when available
+        - Output ONLY the corrected Cypher query
+        - Do NOT explain anything
+        - Ensure all labels, relationships, and properties exist in the schema
+        - If the query contains references such as 'it', 'they', 'that occupation', 'the previous job', 'the last skill', use the conversation history to resolve those references.
+        - Do NOT make the query return whole nodes when they include embedding properties like titleEmbedding, labelEmbedding or descriptionEmbedding. Chose the 
+        node properties that do not contain embeddings.
+        - If unsure, simplify the query instead of guessing
+        """
+    ),
+    MessagesPlaceholder("history"),
+    (
+        "human",
+        """
+        # USER INPUT
+        {question}
         """
     )
 ])
@@ -136,7 +145,7 @@ retry_cypher_prompt = ChatPromptTemplate.from_messages([
 cypher_chain = original_cypher_prompt | llm
 retry_cypher_chain = retry_cypher_prompt | llm
 
-def get_cypher(question:str, entities:RetrievedEntitiesSchema, retry:bool, previous_cypher:str="", error:str=""):
+def get_cypher(question:str, entities:RetrievedEntitiesSchema, history, retry:bool, previous_cypher:str="", error:str=""):
     """generates cypher based on the graph schema and the user's question"""
     if retry:
         return retry_cypher_chain.invoke(
@@ -145,7 +154,8 @@ def get_cypher(question:str, entities:RetrievedEntitiesSchema, retry:bool, previ
                 "error":error,
                 "schema":graph.get_structured_schema,
                 "entities":entities,
-                "question":question
+                "question":question,
+                "history":history
             }
         )
     
@@ -153,7 +163,8 @@ def get_cypher(question:str, entities:RetrievedEntitiesSchema, retry:bool, previ
         {
             "schema":graph.get_structured_schema,
             "entities":entities,
-            "question":question
+            "question":question,
+            "history":history
         }
     )
      

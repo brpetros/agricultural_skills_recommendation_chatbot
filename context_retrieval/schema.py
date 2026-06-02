@@ -9,8 +9,9 @@ class InputEntitiesSchema(TypedDict):
     skills: List[str]
     occupations: List[str]
 
-class RetrievedInfoSchema(TypedDict):
+class EntitySchema(TypedDict):
     """Schema for retrieved occupations, skills or jobs"""
+    original_input: str  #what the user wants lo look for - before retrieval 
     id: str
     label: str
     description: str
@@ -20,6 +21,6 @@ class RetrievedInfoSchema(TypedDict):
 
 class RetrievedEntitiesSchema(TypedDict):
     """Schema for the entities after vector retrieval"""
-    occupations : List[RetrievedInfoSchema]
-    jobs : List[RetrievedInfoSchema]
-    skills : List[RetrievedInfoSchema]
+    occupations : List[EntitySchema]
+    jobs : List[EntitySchema]
+    skills : List[EntitySchema]

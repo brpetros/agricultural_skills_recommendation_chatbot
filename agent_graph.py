@@ -1,6 +1,6 @@
-from typing import TypedDict, List, Dict
-from langgraph.graph import StateGraph, START, END
-from langchain_core.prompts import ChatPromptTemplate
+from typing import TypedDict, List, Dict, Annotated
+from langgraph.graph import StateGraph, START, END, add_messages
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_neo4j import Neo4jChatMessageHistory
 from llm import llm
@@ -9,8 +9,12 @@ from context_retrieval.cypher_construction import get_cypher
 from pprint import pprint
 import json
 from skills_graph import graph
-from context_retrieval.schema import InputEntitiesSchema, RetrievedEntitiesSchema, RetrievedInfoSchema
+from context_retrieval.schema import InputEntitiesSchema, RetrievedEntitiesSchema, EntitySchema
 from final_answer import get_final_answer
+from utils import get_session_id
+import time
+from datetime import datetime, timezone
+from log_data import Interaction, save_interaction
 
 def get_memory(session_id):
     """Returns the chat's memory by the graph"""
@@ -19,11 +23,12 @@ def get_memory(session_id):
 class State(TypedDict):
     """State of the graph."""
     session_id: str
-    messages: List[BaseMessage]
+    start_time: float
+    messages: Annotated[List[BaseMessage],add_messages] # list of messages that gets updated easily using the langgraphs ad_message function
 
     user_query: str
-
-    retrieved_entities: List[List[RetrievedEntitiesSchema]]
+    input_entities: InputEntitiesSchema # the intities that the llm initially identifies at the user's query
+    retrieved_entities: List[List[RetrievedEntitiesSchema]] # the entities found in the graph
 
     cypher_query: str
     cypher_result: List 
@@ -35,11 +40,19 @@ class State(TypedDict):
 
 prompt = ChatPromptTemplate.from_messages([
     ("system",
-     "You are an entity extraction system for a graph database. "
-     "Extract occupations, skills, and jobs from the user query. "
-     "Extract only the labels for each entity. "
-     "Return ONLY structured output. "
-     "If you do not spot an entity, return an empty list for this entity category. For example, if you do not find a job, return an empty list for jobs." ),
+    """
+    You are an entity extraction system for a graph database.
+
+    Extract occupations, skills, and jobs from the current user query.
+
+    If the query contains references such as
+    'it', 'they', 'that occupation', 'the previous job',
+    use the conversation history to resolve those references.
+
+    Return ONLY structured output.
+    If you do not spot an entity, return an empty list for that category.
+    """),
+    MessagesPlaceholder("history"),
     ("human", "{user_query}")
     ]
 )
@@ -47,20 +60,32 @@ prompt = ChatPromptTemplate.from_messages([
 # chain to extract job, occuppation and skill labels from the user's query
 extraction_chain = prompt | llm.with_structured_output(InputEntitiesSchema)
 
- 
+def history_recovery(state:State)->State:
+    session_id = get_session_id()
+    history = get_memory(session_id)
+    return {
+        "session_id": session_id,
+        "messages": history.messages + [HumanMessage(content=state["user_query"])],
+        "start_time": time.perf_counter()
+    }
 
 def entity_extraction(state: State)->State:
     """
         Node for entity esxtraction.
         Instructs the LLM to extract the entities from the user's query and categorize them to occupations, skills and jobs.
     """
-    result = extraction_chain.invoke({"user_query":state["user_query"]})
+    result = extraction_chain.invoke({"user_query":state["user_query"], "history":state["messages"][-5:]}) # provides the last 5 messages to the llm + the query
+    print("recovered history :")
+    print(f"session id: {state["session_id"]}")
+    print(f"messages: {state["messages"]}")
 
-    return { "retrieved_entities":
+    return { 
+        "input_entities":result,
+        "retrieved_entities":
         {
-        "jobs":[RetrievedInfoSchema(label=l) for l in result.get("jobs",[])],
-        "occupations": [RetrievedInfoSchema(label=l) for l in result.get("occupations",[])],
-        "skills": [RetrievedInfoSchema(label=l) for l in result.get("skills",[])],
+        "jobs":[EntitySchema(original_input=l) for l in result.get("jobs",[])],
+        "occupations": [EntitySchema(original_input=l) for l in result.get("occupations",[])],
+        "skills": [EntitySchema(original_input=l) for l in result.get("skills",[])],
     }}
 
 def entities_assessment(state: State)->State:
@@ -75,7 +100,7 @@ def entities_assessment(state: State)->State:
     if not has_entities:
         return {
             "is_relevant": False,
-            "output": "The query does not appear related to the graph domain."
+            "output": "The query does not appear to be related to the domain, or there is no relevant information in the database."
         }
 
     return {
@@ -98,18 +123,12 @@ def retrieve_context(state: State)->State:
     skills = []
     jobs = []
     if state["retrieved_entities"]["occupations"]:
-        occupations = [get_occupations_by_label(occ["label"]) for occ in state["retrieved_entities"]["occupations"] ]
+        occupations = [get_occupations_by_label(occ["original_input"]) for occ in state["retrieved_entities"]["occupations"] ]
     if state["retrieved_entities"]["skills"]:
-        skills = [get_skills_by_label(skill["label"]) for skill in state["retrieved_entities"]["skills"]]
+        skills = [get_skills_by_label(skill["original_input"]) for skill in state["retrieved_entities"]["skills"]]
     if state["retrieved_entities"]["jobs"]:
-        jobs = [get_jobs_by_label(job["label"]) for job in state["retrieved_entities"]["jobs"]]
-    result = {
-        "occupations":occupations,
-        "jobs":jobs,
-        "skills":skills
-    }
-    with open("final_entities_result.json","w",encoding="utf-8") as f:
-        json.dump(result,f,default=str,indent=4,ensure_ascii=False)
+        jobs = [get_jobs_by_label(job["original_input"]) for job in state["retrieved_entities"]["jobs"]]
+    
     return { "retrieved_entities":{
          "occupations":occupations,
          "jobs":jobs,
@@ -135,7 +154,7 @@ def cypher_generation(state: State) -> State:
     """node for cypher generation based on retrieved entities and query"""
     
     # if we need to retry we have the cypher retry node
-    query = get_cypher(question=state["user_query"],entities=state["retrieved_entities"], retry=False)
+    query = get_cypher(question=state["user_query"],entities=state["retrieved_entities"], history=state["messages"][-5:], retry=False)
     print("--returned cypher--")
     print(query.content[0]["text"])
     return {
@@ -182,7 +201,7 @@ def cypher_execution(state: State)->State:
         if not result:
             return {
                 "cypher_result": [],
-                "cypher_error": "",
+                "cypher_error": "Cypher returned no results",
             }
         return {
             "cypher_result": result,
@@ -209,7 +228,14 @@ def cypher_retry(state:State)->State:
     """special node for cypher retry so that the LLM knows it has to change it"""
     
     print(f"cypher retry {state['cypher_retry_count']}")
-    new_cypher = get_cypher(question=state["user_query"],entities=state["retrieved_entities"], retry=True, previous_cypher=state["cypher_query"],error=state["cypher_error"])
+    new_cypher = get_cypher(question=state["user_query"],entities=state["retrieved_entities"],history=state["messages"][-5:], retry=True, previous_cypher=state["cypher_query"],error=state["cypher_error"])
+    print("--debug cypher")
+    
+    print(state["cypher_query"])
+    print(f"errors: {state["cypher_error"]}")
+    print(f"retries: {state["cypher_retry_count"]}")
+    
+
     return {
         "cypher_query": new_cypher.content[0]["text"],
         "cypher_retry_count": state["cypher_retry_count"] + 1
@@ -220,17 +246,40 @@ def cypher_retry(state:State)->State:
 def final_answer_generation(state:State)->State:
     """generation of the final answer"""
     print("final result")
-    output = get_final_answer(query=state["user_query"],entities=state["retrieved_entities"],context=state["cypher_result"])
-    with open("debug.json","w",encoding="utf-8") as f:
-        json.dump(state,f,default=str,indent=4,ensure_ascii=False)
+    output = get_final_answer(query=state["user_query"],cypher_query=state["cypher_query"],context=state["cypher_result"],history=state["messages"][-5:])
     print(output.content[0]["text"])
+
+
     return {
         "output":output.content[0]["text"]
     }
 
+def save(state:State)->State:
+    """node to save session messages to neo4j and metadata to jsonl"""
+    # saving messages permanently in the graph
+    history = get_memory(state["session_id"])
+    history.add_user_message(state["user_query"])
+    history.add_ai_message(state["output"])
+
+    save_interaction(Interaction(
+        session_id=state["session_id"],
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        latency=time.perf_counter()-state["start_time"],
+        user_query=state["user_query"],
+        input_entities=state["input_entities"],
+        retrieved_entities=state["retrieved_entities"],
+        cypher_query=state["cypher_query"],
+        cypher_result=state["cypher_result"],
+        is_relevant=state["is_relevant"],
+        cypher_error=state["cypher_error"],
+        cypher_retry_count=state["cypher_retry_count"],
+        output=state["output"]
+    ))
+    return state
 
 
 agent_graph = StateGraph(State)
+agent_graph.add_node("history_recovery",history_recovery)
 agent_graph.add_node("extract_entities",entity_extraction)
 agent_graph.add_node("assess_entities",entities_assessment)
 
@@ -244,8 +293,10 @@ agent_graph.add_node("retry_cypher",cypher_retry)
 agent_graph.add_node("execute_cypher",cypher_execution)
 
 agent_graph.add_node("generate_final_answer",final_answer_generation)
+agent_graph.add_node("save_data",save)
 
-agent_graph.add_edge(START,"extract_entities")
+agent_graph.add_edge(START,"history_recovery")
+agent_graph.add_edge("history_recovery","extract_entities")
 agent_graph.add_edge("extract_entities","assess_entities")
 
 
@@ -287,6 +338,9 @@ agent_graph.add_conditional_edges(
         "cypher_ok_or_no_results":"generate_final_answer"
     }
 )
+
+agent_graph.add_edge("generate_final_answer","save_data")
+agent_graph.add_edge("save_data",END)
 
 app = agent_graph.compile()
 
