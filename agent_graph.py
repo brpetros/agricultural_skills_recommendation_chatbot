@@ -159,7 +159,7 @@ def cypher_generation(state: State) -> State:
     print(query.content[0]["text"])
     return {
         "cypher_query": query.content[0]["text"],
-        "cypher_retry_count":0
+        "cypher_retry_count": 0
     }
 
 def cypher_safety_validation(state: State)->State:
@@ -246,9 +246,9 @@ def cypher_retry(state:State)->State:
 def final_answer_generation(state:State)->State:
     """generation of the final answer"""
     print("final result")
-    output = get_final_answer(query=state["user_query"],cypher_query=state["cypher_query"],context=state["cypher_result"],history=state["messages"][-5:])
+    output = get_final_answer(query=state["user_query"],cypher_query=state.get("cypher_query","No information available."),context=state.get("cypher_result","No information available."),history=state["messages"][-5:])
     print(output.content[0]["text"])
-
+    
 
     return {
         "output":output.content[0]["text"]
@@ -262,18 +262,18 @@ def save(state:State)->State:
     history.add_ai_message(state["output"])
 
     save_interaction(Interaction(
-        session_id=state["session_id"],
+        session_id=state.get("session_id",""),
         timestamp=datetime.now(timezone.utc).isoformat(),
         latency=time.perf_counter()-state["start_time"],
-        user_query=state["user_query"],
-        input_entities=state["input_entities"],
-        retrieved_entities=state["retrieved_entities"],
-        cypher_query=state["cypher_query"],
-        cypher_result=state["cypher_result"],
-        is_relevant=state["is_relevant"],
-        cypher_error=state["cypher_error"],
-        cypher_retry_count=state["cypher_retry_count"],
-        output=state["output"]
+        user_query=state.get("user_query",""),
+        input_entities=state.get("input_entities",[]),
+        retrieved_entities=state.get("retrieved_entities",[]),
+        cypher_query=state.get("cypher_query",""),
+        cypher_result=state.get("cypher_result",[]),
+        is_relevant=state.get("is_relevant",True),
+        cypher_error=state.get("cypher_error",""),
+        cypher_retry_count=state.get("cypher_retry_count",0),
+        output=state.get("output","")
     ))
     return state
 
@@ -305,7 +305,7 @@ agent_graph.add_conditional_edges(
     route_after_assessment,
     {
         "entities_relevant":"retrieve_context",
-        "entities_irrelevant":END 
+        "entities_irrelevant":"generate_final_answer" 
     }
 )
 agent_graph.add_edge("retrieve_context","assess_context")
@@ -315,7 +315,7 @@ agent_graph.add_conditional_edges(
     route_after_context_assessment,
     {
         "context_relevant":"generate_cypher",
-        "context_irrelevant":END #to-do: replace END by a node that manages irrelevant query
+        "context_irrelevant":"generate_final_answer"
     }
 )
 
@@ -348,7 +348,7 @@ app = agent_graph.compile()
 png_data = app.get_graph().draw_mermaid_png()
 
 
-with open("langgraph_tests/graph_extraction_1.png", "wb") as f:
+with open("graph_image.png", "wb") as f:
     f.write(png_data)
 
 def generate_response(query):

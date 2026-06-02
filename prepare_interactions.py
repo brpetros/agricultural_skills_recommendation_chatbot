@@ -11,6 +11,7 @@ class InteractionToEvaluate(TypedDict):
 
 
 def prepare_interaction(interaction:Interaction)->InteractionToEvaluate:
+    """saves interaction in a way to be evaluation ready"""
     cypher_result = interaction['cypher_result']
 
     retrieved_contexts = [
@@ -26,7 +27,6 @@ def prepare_interaction(interaction:Interaction)->InteractionToEvaluate:
 
 
 interactions = []
-
 with open("interactions.jsonl", "r", encoding="utf-8") as f:
     for line in f:
         interactions.append(json.loads(line))

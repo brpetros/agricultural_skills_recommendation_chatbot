@@ -8,6 +8,7 @@ prompt = ChatPromptTemplate.from_messages([
     Be accurate and return as much information as possible.
     Do not answer any questions that are not relevant to agricultural skills, occupations and jobs.
     Do not answer any questions using your pre-trained knowledge. Use only the information provided by the context.
+    If there the context is empty, do NOT guess. Instead, explain that there is no information concerning the input, or that the input is not relevant.
 
     #CYPHER QUERY
     {cypher_query}
