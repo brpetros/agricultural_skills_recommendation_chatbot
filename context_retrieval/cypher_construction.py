@@ -1,9 +1,10 @@
+from typing import List
 from skills_graph import graph 
 from llm import llm
 from langchain_neo4j import GraphCypherQAChain
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
-from context_retrieval.schema import RetrievedEntitiesSchema
+from context_retrieval.schema import RetrievedEntity
 
 
 
@@ -145,7 +146,7 @@ retry_cypher_prompt = ChatPromptTemplate.from_messages([
 cypher_chain = original_cypher_prompt | llm
 retry_cypher_chain = retry_cypher_prompt | llm
 
-def get_cypher(question:str, entities:RetrievedEntitiesSchema, history, retry:bool, previous_cypher:str="", error:str=""):
+def get_cypher(question:str, entities:List[RetrievedEntity], history, retry:bool, previous_cypher:str="", error:str=""):
     """generates cypher based on the graph schema and the user's question"""
     if retry:
         return retry_cypher_chain.invoke(

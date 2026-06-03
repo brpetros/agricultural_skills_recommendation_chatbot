@@ -4,12 +4,12 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_neo4j import Neo4jChatMessageHistory
 from llm import llm
-from context_retrieval.context_retrieval import get_occupations_by_label, get_jobs_by_label, get_skills_by_label
+from context_retrieval.context_retrieval import retrieve_entity
 from context_retrieval.cypher_construction import get_cypher
 from pprint import pprint
 import json
 from skills_graph import graph
-from context_retrieval.schema import InputEntitiesSchema, RetrievedEntitiesSchema, EntitySchema
+from context_retrieval.schema import InputEntity, RetrievedEntity
 from final_answer import get_final_answer
 from utils import get_session_id
 import time
@@ -27,9 +27,10 @@ class State(TypedDict):
     messages: Annotated[List[BaseMessage],add_messages] # list of messages that gets updated easily using the langgraphs ad_message function
 
     user_query: str
-    input_entities: InputEntitiesSchema # the intities that the llm initially identifies at the user's query
-    retrieved_entities: List[List[RetrievedEntitiesSchema]] # the entities found in the graph
-
+    #input_entities: InputEntitiesSchema # the intities that the llm initially identifies at the user's query
+    input_entities: List[InputEntity]
+    retrieved_entities: List[RetrievedEntity] # the entities found in the graph
+    
     cypher_query: str
     cypher_result: List 
     is_relevant: bool
@@ -43,22 +44,40 @@ prompt = ChatPromptTemplate.from_messages([
     """
     You are an entity extraction system for a graph database.
 
-    Extract occupations, skills, and jobs from the current user query.
+    Extract occupations, skills, jobs, or locations from the current user query.
+    Save each entity exactly as stated by the user. 
+
+    Assign a category ONLY if the user provides it. 
+    Example 1: if the user says that 
+    the entity is a skill, you should save "skill" as the entity category. 
+    Example 2: if the user says "I need information about the following occupations", 
+    the entities that follow this phrase should be categorized as occupations.
+    If the user does not specify a category, you MUST save "unknown" as the entity's category.
+    A category can have one of the following values: 
+    - "job"
+    - "skill"
+    - "occupation"
+    - "location"
+    - "unknown"
 
     If the query contains references such as
     'it', 'they', 'that occupation', 'the previous job',
     use the conversation history to resolve those references.
 
     Return ONLY structured output.
-    If you do not spot an entity, return an empty list for that category.
+    If you do not spot a relevant entity, return an empty list.
     """),
     MessagesPlaceholder("history"),
     ("human", "{user_query}")
     ]
 )
 
+class Entities(TypedDict):
+    """the structure of the LLM output - required to be in this form for the llm"""
+    entities: List[InputEntity]
+
 # chain to extract job, occuppation and skill labels from the user's query
-extraction_chain = prompt | llm.with_structured_output(InputEntitiesSchema)
+extraction_chain = prompt | llm.with_structured_output(Entities)
 
 def history_recovery(state:State)->State:
     session_id = get_session_id()
@@ -68,6 +87,7 @@ def history_recovery(state:State)->State:
         "messages": history.messages + [HumanMessage(content=state["user_query"])],
         "start_time": time.perf_counter()
     }
+    
 
 def entity_extraction(state: State)->State:
     """
@@ -75,34 +95,19 @@ def entity_extraction(state: State)->State:
         Instructs the LLM to extract the entities from the user's query and categorize them to occupations, skills and jobs.
     """
     result = extraction_chain.invoke({"user_query":state["user_query"], "history":state["messages"][-5:]}) # provides the last 5 messages to the llm + the query
-    print("recovered history :")
-    print(f"session id: {state["session_id"]}")
-    print(f"messages: {state["messages"]}")
-
+    print("--spotted--")
+    print(result)
     return { 
-        "input_entities":result,
-        "retrieved_entities":
-        {
-        "jobs":[EntitySchema(original_input=l) for l in result.get("jobs",[])],
-        "occupations": [EntitySchema(original_input=l) for l in result.get("occupations",[])],
-        "skills": [EntitySchema(original_input=l) for l in result.get("skills",[])],
-    }}
+        "input_entities":result["entities"]
+    }
 
 def entities_assessment(state: State)->State:
     """Assesses if the given query is relevant (if it has entities like jobs occupations or skills)."""
-    has_entities = any([
-        state["retrieved_entities"]["occupations"],
-        state["retrieved_entities"]["jobs"],
-        state["retrieved_entities"]["skills"]
-        ] 
-    )
 
-    if not has_entities:
+    if len(state["input_entities"])==0:
         return {
-            "is_relevant": False,
-            "output": "The query does not appear to be related to the domain, or there is no relevant information in the database."
+            "is_relevant": False
         }
-
     return {
         "is_relevant": True
     }
@@ -119,21 +124,14 @@ def retrieve_context(state: State)->State:
         Node for context retrieval.
         Performs vector search to spot the extracted entities in the graph.
     """
-    occupations = []
-    skills = []
-    jobs = []
-    if state["retrieved_entities"]["occupations"]:
-        occupations = [get_occupations_by_label(occ["original_input"]) for occ in state["retrieved_entities"]["occupations"] ]
-    if state["retrieved_entities"]["skills"]:
-        skills = [get_skills_by_label(skill["original_input"]) for skill in state["retrieved_entities"]["skills"]]
-    if state["retrieved_entities"]["jobs"]:
-        jobs = [get_jobs_by_label(job["original_input"]) for job in state["retrieved_entities"]["jobs"]]
     
-    return { "retrieved_entities":{
-         "occupations":occupations,
-         "jobs":jobs,
-         "skills":skills
-    }}
+    return {
+        "retrieved_entities":[
+            retrieved
+            for input_entity in state["input_entities"]
+            for retrieved in retrieve_entity(input_entity)
+        ]
+    }
 
 
 def context_assessment(state:State)->State:
@@ -253,11 +251,9 @@ def no_result_answer(state:State)->State:
 
 def final_answer_generation(state:State)->State:
     """generation of the final answer"""
-    print("final result")
+
     output = get_final_answer(query=state["user_query"],cypher_query=state.get("cypher_query","No information available."),context=state.get("cypher_result","No information available."),history=state["messages"][-5:])
-    print(output.content[0]["text"])
-
-
+    
     return {
         "output":output.content[0]["text"]
     }

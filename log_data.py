@@ -1,5 +1,5 @@
 from typing import TypedDict, List
-from context_retrieval.schema import RetrievedEntitiesSchema, InputEntitiesSchema
+from context_retrieval.schema import RetrievedEntity, InputEntity
 from datetime import datetime
 import json
 from pathlib import Path
@@ -11,8 +11,8 @@ class Interaction(TypedDict):
     latency: float
 
     user_query: str
-    input_entities: InputEntitiesSchema # the intities that the llm initially identifies at the user's query
-    retrieved_entities: List[List[RetrievedEntitiesSchema]] # the entities found in the graph
+    input_entities: List[InputEntity] # the intities that the llm initially identifies at the user's query
+    retrieved_entities: List[RetrievedEntity] # the entities found in the graph
 
     cypher_query: str
     cypher_result: List 
