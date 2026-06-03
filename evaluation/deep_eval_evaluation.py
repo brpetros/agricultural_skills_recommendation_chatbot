@@ -44,7 +44,7 @@ test_cases = [LLMTestCase(input=interaction["user_input"],
               for interaction in interactions_to_evaluate]
 
 
-eval_result = evaluate(test_cases=test_cases,metrics=[contextual_relevancy, answer_relevancy, faithfulness, clarity])
+eval_result = evaluate(test_cases=test_cases,metrics=[contextual_relevancy, answer_relevancy, faithfulness, clarity, fluency, consistency])
 #pprint(eval_result)
 
 with open("evaluation/evaluation_results.json","w",encoding="utf-8") as f:

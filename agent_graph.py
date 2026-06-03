@@ -213,15 +213,15 @@ def cypher_execution(state: State)->State:
             "cypher_error": str(e),
         }
 
-MAX_RETRIES = 3
+MAX_RETRIES = 2
 
-def cypher_result_validation(state: State)->State:
+def cypher_result_validation(state: State)->str:
     """conditional node to check if there is any error by cypher execution"""
-    if state["cypher_error"] != "" and state["cypher_retry_count"] <= MAX_RETRIES :
+    if state["cypher_error"] != "" and state["cypher_retry_count"] < MAX_RETRIES :
         return "cypher_unsuccessful"
     if state["cypher_retry_count"] >= MAX_RETRIES:
-        state["cypher_result"] = "No data found in the graph."
-    return "cypher_ok_or_no_results"
+        return "max_retries"
+    return "cypher_ok"
 
 
 def cypher_retry(state:State)->State:
@@ -241,14 +241,22 @@ def cypher_retry(state:State)->State:
         "cypher_retry_count": state["cypher_retry_count"] + 1
     }
 
-
+def no_result_answer(state:State)->State:
+    return {
+        "output":"It seems that I am not able to answer your question :(\n"
+        "\nPossible solutions:\n"
+        "- Make sure that what you are asking for is relevant to **agricultural skills, occupations and jobs**, as I am only trained "
+        "for this. My information is based on the ESCO classification and Skillab job data.\n"
+        "- Try to specify the type of the entities you are looking for. For example, if you are trying to find about Agricultural Business Management, "
+        "specify that this is a skill and not an occupation."
+    }
 
 def final_answer_generation(state:State)->State:
     """generation of the final answer"""
     print("final result")
     output = get_final_answer(query=state["user_query"],cypher_query=state.get("cypher_query","No information available."),context=state.get("cypher_result","No information available."),history=state["messages"][-5:])
     print(output.content[0]["text"])
-    
+
 
     return {
         "output":output.content[0]["text"]
@@ -293,6 +301,7 @@ agent_graph.add_node("retry_cypher",cypher_retry)
 agent_graph.add_node("execute_cypher",cypher_execution)
 
 agent_graph.add_node("generate_final_answer",final_answer_generation)
+agent_graph.add_node("no_result_answer",no_result_answer)
 agent_graph.add_node("save_data",save)
 
 agent_graph.add_edge(START,"history_recovery")
@@ -305,7 +314,7 @@ agent_graph.add_conditional_edges(
     route_after_assessment,
     {
         "entities_relevant":"retrieve_context",
-        "entities_irrelevant":"generate_final_answer" 
+        "entities_irrelevant":"no_result_answer" 
     }
 )
 agent_graph.add_edge("retrieve_context","assess_context")
@@ -315,7 +324,7 @@ agent_graph.add_conditional_edges(
     route_after_context_assessment,
     {
         "context_relevant":"generate_cypher",
-        "context_irrelevant":"generate_final_answer"
+        "context_irrelevant":"no_result_answer"
     }
 )
 
@@ -335,11 +344,13 @@ agent_graph.add_conditional_edges(
     cypher_result_validation,
     {
         "cypher_unsuccessful":"retry_cypher",
-        "cypher_ok_or_no_results":"generate_final_answer"
+        "max_retries":"no_result_answer",
+        "cypher_ok":"generate_final_answer"
     }
 )
 
 agent_graph.add_edge("generate_final_answer","save_data")
+agent_graph.add_edge("no_result_answer","save_data")
 agent_graph.add_edge("save_data",END)
 
 app = agent_graph.compile()
