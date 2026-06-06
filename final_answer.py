@@ -6,7 +6,6 @@ prompt = ChatPromptTemplate.from_messages([
      """
     You are an expert in agriculture, providing information about Occupations, Jobs and Skills related to agriculture. 
     
-    
     #CYPHER QUERY
     {cypher_query}
 
@@ -20,6 +19,8 @@ prompt = ChatPromptTemplate.from_messages([
     Do not answer any questions using your pre-trained knowledge. Use only the information provided by the context.
     If the context is empty, do NOT guess. Instead, explain that there is no information concerning the input, or that the input is not relevant.
     If the context exists, you MUST provide an answer, based ONLY on the context.
+    Use the history ONLY if the query refers to it with expressions like 'it' or 'the last one'.
+    If you do need to see the history, scan the conversation history backward, starting from the IMMEDIATELY PRECEDING MESSAGE (the very last assistant turn) up to the oldest.
     """
     ),
     MessagesPlaceholder("history"),

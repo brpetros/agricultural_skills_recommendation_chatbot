@@ -1,5 +1,6 @@
 langgraph_tests/
 .env.local
+.deepeval
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

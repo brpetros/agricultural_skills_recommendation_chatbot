@@ -29,35 +29,40 @@ original_cypher_prompt = ChatPromptTemplate.from_messages([
         STRICT REQUIREMENTS:
         - The cypher search query should be based only on the information from the retrieved entities that are relevant to the user's query. 
         - Each entity contains the original user's input, which was used for the entity to be retrieved. Use this to relate the user's question with the retrieved entities.
-        - Prefer entity IDs when available
-        - Output ONLY the corrected Cypher query
-        - Do NOT explain anything
-        - Ensure all labels, relationships, and properties exist in the schema
+        - Prefer entity IDs when available.
+        - Output ONLY the Cypher query. Do NOT wrap it in markdown code blocks, do NOT write markdown formatting, and do NOT explain anything.
+        - Ensure all labels, relationships, and properties exist in the schema.
         - If the query contains references such as 'it', 'they', 'that occupation', 'the previous job', 'the last skill', use the conversation history to resolve those references.
-        - Do NOT make the query return whole nodes when they include embedding properties like titleEmbedding, labelEmbedding or descriptionEmbedding. Chose the 
-        node properties that do not contain embeddings.
-        - Prefer entity IDs when available
-        - If unsure, simplify the query instead of guessing
+        - RESOLUTION STRATEGY: If you need to see the history, scan the conversation history backward, starting from the IMMEDIATELY PRECEDING MESSAGE (the very last assistant turn) up to the oldest.
+        - Do NOT make the query return whole nodes when they include embedding properties like titleEmbedding, labelEmbedding or descriptionEmbedding. Choose specific node properties that do not contain embeddings.
+        - If unsure, simplify the query instead of guessing.
+
+        RELATIONSHIP DIRECTION RULES (CRITICAL):
+        - Analyze the relationship directions defined in the # GRAPH SCHEMA (e.g., `(:NodeA)-[:REL_TYPE]->(:NodeB)`).
+        - Ensure the arrows in your MATCH patterns strictly match the schema's canonical direction. For example, if the schema specifies `(:User)-[:HAS_SKILL]->(:Skill)`, your query must match `(u:User)-[:HAS_SKILL]->(s:Skill)`. Do NOT write `(u:User)<-[:HAS_SKILL]-(s:Skill)`.
+        - SAFE FALLBACK: If the direction of traversal is ambiguous in the user's question, or if you are unsure of the correct semantic flow, use an UNDIRECTED relationship pattern by omitting arrowheads (e.g., `(a)-[:REL_TYPE]-(b)`). This prevents returning 0 results due to directional mismatches while remaining safe.
         """
     ),
     MessagesPlaceholder("history"),
     (
         "human",
         """
-        # USER QUESTION
         {question}
         """
     )
 ])
-# prompt to retry cypher generation
 
+# =====================================================================
+# 2. RETRY CYPHER GENERATION PROMPT
+# =====================================================================
+# Enhanced to handle both syntax/schema errors and logical errors (like returning 0 results)
 retry_cypher_prompt = ChatPromptTemplate.from_messages([
     (
         "system",
         """
         You are an expert Neo4j Cypher query generator specialized in correcting failed queries.
 
-        Your task is to FIX broken Cypher queries and produce correct, executable, and SAFE READ-ONLY Cypher queries.
+        Your task is to FIX broken or unproductive Cypher queries and produce correct, executable, and SAFE READ-ONLY Cypher queries.
 
         ONLY READ operations are allowed.
 
@@ -71,18 +76,7 @@ retry_cypher_prompt = ChatPromptTemplate.from_messages([
         - LIMIT
 
         Forbidden operations and clauses:
-        - CREATE
-        - MERGE
-        - DELETE
-        - SET
-        - REMOVE
-        - DROP
-        - CALL
-        - LOAD CSV
-        - APOC procedures
-        - db.*
-        - schema modifications
-        - writes of any kind
+        - CREATE, MERGE, DELETE, SET, REMOVE, DROP, CALL, LOAD CSV, APOC procedures, db.*, schema modifications, writes of any kind.
 
         # GRAPH SCHEMA
         {schema}
@@ -90,53 +84,34 @@ retry_cypher_prompt = ChatPromptTemplate.from_messages([
         # EXTRACTED ENTITIES
         {entities}
 
-
         # PREVIOUS FAILED CYPHER QUERY
         {previous_cypher}
 
-        # ERROR MESSAGE 
+        # ERROR MESSAGE OR EXECUTION FAILURE
         {error}
 
         # TASK
-        Analyze why the query failed and generate a corrected Cypher query.
+        Analyze why the previous query failed or returned no results, and generate a corrected Cypher query.
 
-        Possible failure causes include:
-        - syntax issues
-        - invalid labels
-        - invalid relationships
-        - invalid properties
-        - incorrect filtering
-        - incorrect entity usage
-        - schema mismatch
-        - overconstrained conditions
+        Common failure causes to check:
+        1. REVERSED RELATIONSHIPS: The arrow in the relationship pattern went the wrong way (e.g., `(a)<-[:REL]-(b)` instead of `(a)-[:REL]->(b)`). Check the # GRAPH SCHEMA directions carefully!
+        2. OVERCONSTRAINED FILTERS: A property match was too specific or misspelled.
+        3. SYNTAX ISSUES: Misplaced brackets, invalid clauses, or undeclared variables.
+        4. SCHEMA MISMATCH: Using labels, relationships, or properties not explicitly declared in the schema.
 
         Correction strategy:
-        - fix syntax issues
-        - align query with schema
-        - correct labels/relationships/properties
-        - simplify overly complex queries
-        - relax filters slightly if appropriate
-        - use grounded entity IDs when available
-
-        Return ONLY the corrected Cypher query.
-        
-        STRICT REQUIREMENTS:
-        - The cypher search query should be based only on the information from the retrieved entities
-        - Prefer entity IDs when available
-        - Output ONLY the corrected Cypher query
-        - Do NOT explain anything
-        - Ensure all labels, relationships, and properties exist in the schema
-        - If the query contains references such as 'it', 'they', 'that occupation', 'the previous job', 'the last skill', use the conversation history to resolve those references.
-        - Do NOT make the query return whole nodes when they include embedding properties like titleEmbedding, labelEmbedding or descriptionEmbedding. Chose the 
-        node properties that do not contain embeddings.
-        - If unsure, simplify the query instead of guessing
+        - Align query pattern directions perfectly with the schema.
+        - If relationship direction is causing the failure, use an undirected relationship (e.g., `(a)-[:REL_TYPE]-(b)`) to bypass directional strictness safely.
+        - Simplify overly complex conditions.
+        - Return ONLY the corrected Cypher query. Do NOT wrap it in markdown code blocks and do NOT explain anything.
+        - Do NOT make the query return whole nodes when they include embedding properties like titleEmbedding, labelEmbedding or descriptionEmbedding.
+        - RESOLUTION STRATEGY: If you need to see the history, scan the conversation history backward, starting from the IMMEDIATELY PRECEDING MESSAGE (the very last assistant turn) up to the oldest.
         """
     ),
     MessagesPlaceholder("history"),
     (
         "human",
         """
-        # USER INPUT
         {question}
         """
     )

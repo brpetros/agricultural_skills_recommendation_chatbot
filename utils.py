@@ -15,4 +15,7 @@ def write_message(role, content, save = True):
         st.markdown(content)
 
 def get_session_id():
-    return get_script_run_ctx().session_id
+    ctx = get_script_run_ctx()
+    if ctx:
+        return ctx.session_id
+    return "test-session"

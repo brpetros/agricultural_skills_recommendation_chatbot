@@ -22,7 +22,7 @@ class Interaction(TypedDict):
 
     output: str
 
-INTERACTIONS_FILE = Path("interactions.jsonl")
+INTERACTIONS_FILE = Path("chatbot_logs.jsonl")
 def save_interaction(interaction: Interaction):
     with INTERACTIONS_FILE.open("a", encoding="utf-8") as f:
         json.dump(

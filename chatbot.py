@@ -1,5 +1,5 @@
 import streamlit as st
-from utils import write_message
+from utils import write_message, get_session_id
 from agent_graph import generate_response
 from datetime import datetime
 
@@ -17,7 +17,7 @@ def handle_submit(message):
     # Handle the response
     with st.spinner('Thinking...'):
         # Call the agent
-        response = generate_response(message)
+        response = generate_response(session_id=get_session_id(),query=message)
         write_message('assistant', response)
 
 

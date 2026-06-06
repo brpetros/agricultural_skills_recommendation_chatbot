@@ -67,4 +67,4 @@ def retrieve_entity(entity:InputEntity,k:int = 1)->List[RetrievedEntity]:
     print(f"--retrieved candidates for entity{entity['original_input']}")
     pprint(candidates)
 
-    return max(candidates,key=lambda x: x["score"])
+    return [max(candidates,key=lambda x: x["score"])]

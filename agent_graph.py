@@ -4,6 +4,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_neo4j import Neo4jChatMessageHistory
 from llm import llm
+from context_retrieval.entity_extraction import extract_entities
 from context_retrieval.context_retrieval import retrieve_entity
 from context_retrieval.cypher_construction import get_cypher
 from pprint import pprint
@@ -11,7 +12,6 @@ import json
 from skills_graph import graph
 from context_retrieval.schema import InputEntity, RetrievedEntity
 from final_answer import get_final_answer
-from utils import get_session_id
 import time
 from datetime import datetime, timezone
 from log_data import Interaction, save_interaction
@@ -27,60 +27,23 @@ class State(TypedDict):
     messages: Annotated[List[BaseMessage],add_messages] # list of messages that gets updated easily using the langgraphs ad_message function
 
     user_query: str
-    #input_entities: InputEntitiesSchema # the intities that the llm initially identifies at the user's query
+    
     input_entities: List[InputEntity]
     retrieved_entities: List[RetrievedEntity] # the entities found in the graph
     
     cypher_query: str
     cypher_result: List 
-    is_relevant: bool
+    entities_relevant: bool
     cypher_error: str
     cypher_retry_count: int 
 
     output: str
 
-prompt = ChatPromptTemplate.from_messages([
-    ("system",
-    """
-    You are an entity extraction system for a graph database.
 
-    Extract occupations, skills, jobs, or locations from the current user query.
-    Save each entity exactly as stated by the user. 
 
-    Assign a category ONLY if the user provides it. 
-    Example 1: if the user says that 
-    the entity is a skill, you should save "skill" as the entity category. 
-    Example 2: if the user says "I need information about the following occupations", 
-    the entities that follow this phrase should be categorized as occupations.
-    If the user does not specify a category, you MUST save "unknown" as the entity's category.
-    A category can have one of the following values: 
-    - "job"
-    - "skill"
-    - "occupation"
-    - "location"
-    - "unknown"
-
-    If the query contains references such as
-    'it', 'they', 'that occupation', 'the previous job',
-    use the conversation history to resolve those references.
-
-    Return ONLY structured output.
-    If you do not spot a relevant entity, return an empty list.
-    """),
-    MessagesPlaceholder("history"),
-    ("human", "{user_query}")
-    ]
-)
-
-class Entities(TypedDict):
-    """the structure of the LLM output - required to be in this form for the llm"""
-    entities: List[InputEntity]
-
-# chain to extract job, occuppation and skill labels from the user's query
-extraction_chain = prompt | llm.with_structured_output(Entities)
 
 def history_recovery(state:State)->State:
-    session_id = get_session_id()
+    session_id = state["session_id"] 
     history = get_memory(session_id)
     return {
         "session_id": session_id,
@@ -94,7 +57,7 @@ def entity_extraction(state: State)->State:
         Node for entity esxtraction.
         Instructs the LLM to extract the entities from the user's query and categorize them to occupations, skills and jobs.
     """
-    result = extraction_chain.invoke({"user_query":state["user_query"], "history":state["messages"][-5:]}) # provides the last 5 messages to the llm + the query
+    result = extract_entities(user_input=state["user_query"],history=state["messages"][-5:])
     print("--spotted--")
     print(result)
     return { 
@@ -106,15 +69,15 @@ def entities_assessment(state: State)->State:
 
     if len(state["input_entities"])==0:
         return {
-            "is_relevant": False
+            "entities_relevant": False
         }
     return {
-        "is_relevant": True
+        "entities_relevant": True
     }
 
 def route_after_assessment(state: State)->str:
     """conditinal node after entities assessment"""
-    if state["is_relevant"]:
+    if state["entities_relevant"]:
         return "entities_relevant"
     else:
         return "entities_irrelevant"
@@ -137,13 +100,15 @@ def retrieve_context(state: State)->State:
 def context_assessment(state:State)->State:
     """node to assess the score of the retrieved context (if it is actually relevant)"""
     # to-do: expand this node so that it actually checks the retrieved results for their relevance 
+    print("--retrieved entities--")
+    pprint(state["retrieved_entities"])
     return {
-        "is_relevant":True
+        "entities_relevant":True
     }
 
 def route_after_context_assessment(state:State)->str:
     """routes after context assessment"""
-    if state["is_relevant"]:
+    if state["entities_relevant"]:
         return "context_relevant"
     else:
         return "context_irrelevant"
@@ -199,7 +164,7 @@ def cypher_execution(state: State)->State:
         if not result:
             return {
                 "cypher_result": [],
-                "cypher_error": "Cypher returned no results",
+                "cypher_error": "No relevant data was found in the database.",
             }
         return {
             "cypher_result": result,
@@ -207,7 +172,7 @@ def cypher_execution(state: State)->State:
         }
     except Exception as e:
         return {
-            "cypher_result": result,
+            "cypher_result": [],
             "cypher_error": str(e),
         }
 
@@ -225,13 +190,11 @@ def cypher_result_validation(state: State)->str:
 def cypher_retry(state:State)->State:
     """special node for cypher retry so that the LLM knows it has to change it"""
     
-    print(f"cypher retry {state['cypher_retry_count']}")
-    new_cypher = get_cypher(question=state["user_query"],entities=state["retrieved_entities"],history=state["messages"][-5:], retry=True, previous_cypher=state["cypher_query"],error=state["cypher_error"])
-    print("--debug cypher")
-    
+    print(f"--cypher retry {state['cypher_retry_count'] + 1}--")
+    print(f"errors of previous cypher: {state["cypher_error"]}")
+    print("new cypher query")
     print(state["cypher_query"])
-    print(f"errors: {state["cypher_error"]}")
-    print(f"retries: {state["cypher_retry_count"]}")
+    new_cypher = get_cypher(question=state["user_query"],entities=state["retrieved_entities"],history=state["messages"][-5:], retry=True, previous_cypher=state["cypher_query"],error=state["cypher_error"])
     
 
     return {
@@ -240,13 +203,26 @@ def cypher_retry(state:State)->State:
     }
 
 def no_result_answer(state:State)->State:
-    return {
-        "output":"It seems that I am not able to answer your question :(\n"
+    
+    if state["entities_relevant"] == False:
+        output = "It seems that I am not able to answer your question :(\n" \
+        "This is probably because what you are asking for is not relevant to agricultural skills, jobs, or occupations.\n"
         "\nPossible solutions:\n"
         "- Make sure that what you are asking for is relevant to **agricultural skills, occupations and jobs**, as I am only trained "
-        "for this. My information is based on the ESCO classification and Skillab job data.\n"
+        "for this. My information is based on the ESCO classification and Skillab data regarding job offers.\n"
         "- Try to specify the type of the entities you are looking for. For example, if you are trying to find about Agricultural Business Management, "
-        "specify that this is a skill and not an occupation."
+        "specify that this is a skill and not an occupation in the ESCO database.\n"
+        "- Change the terms that you used or the order of your phrasing.\n"
+    elif state["cypher_error"]!="":
+        output = f"""{state["cypher_error"]}\n
+        \nIf you think that this should not be the case, please try the following:\n
+        - Make sure that what you are asking for is relevant to **agricultural skills, occupations and jobs**, as I am only trained 
+        for this. My information is based on the ESCO classification and Skillab job data.\n
+        - Try to specify the type of the entities you are looking for. For example, if you are trying to find about Agricultural Business Management, 
+        specify that this is a skill and not an occupation.\n
+        - Change the terms that you used or the order of your phrasing.\n"""
+    return {
+        "output":output
     }
 
 def final_answer_generation(state:State)->State:
@@ -274,7 +250,7 @@ def save(state:State)->State:
         retrieved_entities=state.get("retrieved_entities",[]),
         cypher_query=state.get("cypher_query",""),
         cypher_result=state.get("cypher_result",[]),
-        is_relevant=state.get("is_relevant",True),
+        entities_relevant=state.get("entities_relevant",True),
         cypher_error=state.get("cypher_error",""),
         cypher_retry_count=state.get("cypher_retry_count",0),
         output=state.get("output","")
@@ -358,6 +334,6 @@ png_data = app.get_graph().draw_mermaid_png()
 with open("graph_image.png", "wb") as f:
     f.write(png_data)
 
-def generate_response(query):
-    result = app.invoke(State(user_query=query))
+def generate_response(session_id,query):
+    result = app.invoke(State(session_id=session_id,user_query=query))
     return result["output"]
