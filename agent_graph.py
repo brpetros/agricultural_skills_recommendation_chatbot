@@ -214,13 +214,16 @@ def no_result_answer(state:State)->State:
         "specify that this is a skill and not an occupation in the ESCO database.\n"
         "- Change the terms that you used or the order of your phrasing.\n"
     elif state["cypher_error"]!="":
-        output = f"""{state["cypher_error"]}\n
-        \nIf you think that this should not be the case, please try the following:\n
-        - Make sure that what you are asking for is relevant to **agricultural skills, occupations and jobs**, as I am only trained 
-        for this. My information is based on the ESCO classification and Skillab job data.\n
-        - Try to specify the type of the entities you are looking for. For example, if you are trying to find about Agricultural Business Management, 
-        specify that this is a skill and not an occupation.\n
-        - Change the terms that you used or the order of your phrasing.\n"""
+       output = f"""{state["cypher_error"]}
+
+                If you think that this should not be the case, please try the following:
+
+                - Make sure that what you are asking for is relevant to **agricultural skills, occupations and jobs**, as I am only trained for this. My information is based on the ESCO classification and Skillab job data.
+
+                - Try to specify the type of the entities you are looking for. For example, if you are trying to find information about Agricultural Business Management, specify that it is a skill and not an occupation.
+
+                - Change the terms that you used or the order of your phrasing.
+                """
     return {
         "output":output
     }

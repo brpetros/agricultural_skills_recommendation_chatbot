@@ -41,11 +41,24 @@ def get_jobs_by_label(input:InputEntity, k:int = 1) -> List[RetrievedEntity]:
     print(results)
     return [document_to_schema(input,doc,score) for doc,score in results]
 
+def get_location(input:InputEntity)->List[RetrievedEntity]:
+    """returns the location exactly as it is in the input. Need to update by adding vector search."""
+    return [{
+        "original_input": input["original_input"],
+        "category":input["category"],
+        "label": "",
+        "description": "",
+        "id": "",
+        "type": "",
+        "score": 0
+    }]
+
 # dict of the search functions used depending on each entity's category
 SEARCH_FUNCTIONS = {
     "occupation":get_occupations_by_label,
     "job":get_jobs_by_label,
-    "skill":get_skills_by_label
+    "skill":get_skills_by_label,
+    "location":get_location
 }
 
 def retrieve_entity(entity:InputEntity,k:int = 1)->List[RetrievedEntity]:
@@ -56,12 +69,12 @@ def retrieve_entity(entity:InputEntity,k:int = 1)->List[RetrievedEntity]:
     category = entity["category"]
 
     if category !="unknown":
-        return SEARCH_FUNCTIONS[category](entity,k)
+        return SEARCH_FUNCTIONS[category](entity)
     
     # category unknown -> searches all of the indexes
     candidates = []
     for search_function in SEARCH_FUNCTIONS.values():
-        candidates.extend(search_function(entity,k))
+        candidates.extend(search_function(entity))
 
     candidates.sort(key=lambda x: x["score"],reverse=True)
     print(f"--retrieved candidates for entity{entity['original_input']}")

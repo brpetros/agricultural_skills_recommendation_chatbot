@@ -8,6 +8,8 @@ class FinalInteraction(TypedDict):
     actual_output: str
     retrieval_context: List[str]
 
+
+
 def prepare_interaction(interaction:Interaction)->FinalInteraction:
     """saves interaction in a way to be appropriate for evaluation with deepeval"""
     cypher_result = interaction['cypher_result']
@@ -50,4 +52,4 @@ def save_interactions(sessions_to_save:str):
         )
     print("interactions saved")
 
-save_interactions("occupation testing for")
+save_interactions("single questions testing")
