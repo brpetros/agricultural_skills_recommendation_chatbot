@@ -1,5 +1,6 @@
 from llm import llm
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from utils import extract_text_safely
 
 prompt = ChatPromptTemplate.from_messages([
     ("system",
@@ -18,7 +19,8 @@ prompt = ChatPromptTemplate.from_messages([
     Be accurate and return as much information as possible.
     Do not answer any questions using your pre-trained knowledge. Use only the information provided by the context.
     If the context is empty, do NOT guess. Instead, explain that there is no information concerning the input, or that the input is not relevant.
-    If the context exists, you MUST provide an answer, based ONLY on the context.
+    If the context exists, you MUST provide an answer, based ONLY on the context. 
+    Even if you think that the provided context is not relevant to the user's query, answer by specifying that although there is no information exactly related to the original question, you have the information provided by the database. And proceed to present the information that you have.
     Use the history ONLY if the query refers to it with expressions like 'it' or 'the last one'.
     If you do need to see the history, scan the conversation history backward, starting from the IMMEDIATELY PRECEDING MESSAGE (the very last assistant turn) up to the oldest.
     """
@@ -29,10 +31,15 @@ prompt = ChatPromptTemplate.from_messages([
 
 final_answer_chain = prompt | llm
 
-def get_final_answer(query,cypher_query,context,history):
-    return final_answer_chain.invoke({
-        "query":query,
-        "cypher_query":cypher_query,
-        "context":context,
-        "history":history
-    })
+def get_final_answer(query,cypher_query,context,history)->str:
+    try:
+        llm_response = final_answer_chain.invoke({
+            "query":query,
+            "cypher_query":cypher_query,
+            "context":context,
+            "history":history
+        })
+        return extract_text_safely(llm_response,"Error generating the response.")
+    except Exception as e:
+        return f"Error generating answer: {e}"
+    

@@ -1,20 +1,17 @@
 from typing import TypedDict, List, Dict, Annotated
 from langgraph.graph import StateGraph, START, END, add_messages
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_neo4j import Neo4jChatMessageHistory
-from llm import llm
-from context_retrieval.entity_extraction import extract_entities
-from context_retrieval.context_retrieval import retrieve_entity
+from context_retrieval.semantic_extraction import extract_segments
+from context_retrieval.context_retrieval import retrieve_entities
 from context_retrieval.cypher_construction import get_cypher
 from pprint import pprint
-import json
-from skills_graph import graph
-from context_retrieval.schema import InputEntity, RetrievedEntity
+from graph_db import graph
 from final_answer import get_final_answer
 import time
 from datetime import datetime, timezone
 from log_data import Interaction, save_interaction
+from suggest_alternatives import suggest_alternatives
 
 def get_memory(session_id):
     """Returns the chat's memory by the graph"""
@@ -28,8 +25,8 @@ class State(TypedDict):
 
     user_query: str
     
-    input_entities: List[InputEntity]
-    retrieved_entities: List[RetrievedEntity] # the entities found in the graph
+    input_entities: List[str]
+    retrieved_entities: Dict # the entities found in the graph
     
     cypher_query: str
     cypher_result: List 
@@ -57,11 +54,9 @@ def entity_extraction(state: State)->State:
         Node for entity esxtraction.
         Instructs the LLM to extract the entities from the user's query and categorize them to occupations, skills and jobs.
     """
-    result = extract_entities(user_input=state["user_query"],history=state["messages"][-5:])
-    print("--spotted--")
-    print(result)
+    result = extract_segments(user_input=state["user_query"],history=state["messages"][-5:])
     return { 
-        "input_entities":result["entities"]
+        "input_entities":result["segments"]
     }
 
 def entities_assessment(state: State)->State:
@@ -69,10 +64,12 @@ def entities_assessment(state: State)->State:
 
     if len(state["input_entities"])==0:
         return {
-            "entities_relevant": False
+            "entities_relevant": False,
+            "cypher_error": ""
         }
     return {
-        "entities_relevant": True
+        "entities_relevant": True,
+        "cypher_error": ""
     }
 
 def route_after_assessment(state: State)->str:
@@ -89,19 +86,13 @@ def retrieve_context(state: State)->State:
     """
     
     return {
-        "retrieved_entities":[
-            retrieved
-            for input_entity in state["input_entities"]
-            for retrieved in retrieve_entity(input_entity)
-        ]
+        "retrieved_entities": retrieve_entities(state["input_entities"])
     }
 
 
 def context_assessment(state:State)->State:
     """node to assess the score of the retrieved context (if it is actually relevant)"""
     # to-do: expand this node so that it actually checks the retrieved results for their relevance 
-    print("--retrieved entities--")
-    pprint(state["retrieved_entities"])
     return {
         "entities_relevant":True
     }
@@ -118,8 +109,7 @@ def cypher_generation(state: State) -> State:
     
     # if we need to retry we have the cypher retry node
     query = get_cypher(question=state["user_query"],entities=state["retrieved_entities"], history=state["messages"][-5:], retry=False)
-    print("--returned cypher--")
-    print(query.content[0]["text"])
+
     return {
         "cypher_query": query.content[0]["text"],
         "cypher_retry_count": 0
@@ -149,16 +139,24 @@ def cypher_safety_validation(state: State)->State:
     return {
         "cypher_error":""
     }
-    
+
+MAX_RETRIES = 2
+
 def route_after_safety_validation(state:State)->str:
     """conditional node after cypher safety assessment"""
-    if state["cypher_error"] != "":
+    if state["cypher_error"] != "" :
         return "unsafe_cypher"
     return "safe_cypher"
 
 def cypher_execution(state: State)->State:
     """node to execute the cypher query or return the error if it has failed."""
     
+    if state["cypher_retry_count"] >= MAX_RETRIES:
+        return {
+            "cypher_result": [],
+            "cypher_error": "No relevant data was found in the database.",
+        }
+
     try:
         result = graph.query(state["cypher_query"])
         if not result:
@@ -176,7 +174,6 @@ def cypher_execution(state: State)->State:
             "cypher_error": str(e),
         }
 
-MAX_RETRIES = 2
 
 def cypher_result_validation(state: State)->str:
     """conditional node to check if there is any error by cypher execution"""
@@ -190,10 +187,10 @@ def cypher_result_validation(state: State)->str:
 def cypher_retry(state:State)->State:
     """special node for cypher retry so that the LLM knows it has to change it"""
     
-    print(f"--cypher retry {state['cypher_retry_count'] + 1}--")
-    print(f"errors of previous cypher: {state["cypher_error"]}")
-    print("new cypher query")
-    print(state["cypher_query"])
+    if state["cypher_retry_count"] >= MAX_RETRIES:
+        return {
+            "cypher_query":"maximum retries"
+        }
     new_cypher = get_cypher(question=state["user_query"],entities=state["retrieved_entities"],history=state["messages"][-5:], retry=True, previous_cypher=state["cypher_query"],error=state["cypher_error"])
     
 
@@ -202,26 +199,31 @@ def cypher_retry(state:State)->State:
         "cypher_retry_count": state["cypher_retry_count"] + 1
     }
 
+def alternatives_suggestion(state:State)->State:
+    """suggestion of alternative search paths if no results were found"""
+    # in case of no cypher result, the retrieved entities will be saved as cypher result, so they can be saved as context.
+    context = []
+    for values in state["retrieved_entities"].values():
+        context.extend(values)
+    return {
+        "output": suggest_alternatives(user_input=state["user_query"],cypher_query=state["cypher_query"],retrieved_entities=state["retrieved_entities"],history=state["messages"][-5:]),
+        "cypher_result": context
+    }
+
 def no_result_answer(state:State)->State:
     
-    if state["entities_relevant"] == False:
-        output = "It seems that I am not able to answer your question :(\n" \
-        "This is probably because what you are asking for is not relevant to agricultural skills, jobs, or occupations.\n"
-        "\nPossible solutions:\n"
-        "- Make sure that what you are asking for is relevant to **agricultural skills, occupations and jobs**, as I am only trained "
-        "for this. My information is based on the ESCO classification and Skillab data regarding job offers.\n"
-        "- Try to specify the type of the entities you are looking for. For example, if you are trying to find about Agricultural Business Management, "
-        "specify that this is a skill and not an occupation in the ESCO database.\n"
-        "- Change the terms that you used or the order of your phrasing.\n"
-    elif state["cypher_error"]!="":
+    output = """
+    It seems that I am not able to answer :(\n
+    This is probably because what you are asking for is not relevant to agricultural skills, jobs, or occupations.\n
+    I am only trained to answer this kind of questions, based on ESCO and SKILLAB.\n
+    If this is not the case, please try to say what you want differently.\n
+    Thank you!
+    """
+    if state["cypher_error"]!="":
        output = f"""{state["cypher_error"]}
-
                 If you think that this should not be the case, please try the following:
-
                 - Make sure that what you are asking for is relevant to **agricultural skills, occupations and jobs**, as I am only trained for this. My information is based on the ESCO classification and Skillab job data.
-
-                - Try to specify the type of the entities you are looking for. For example, if you are trying to find information about Agricultural Business Management, specify that it is a skill and not an occupation.
-
+                - Try to specify the type of what you are looking for. For example, if you are trying to find information about Agricultural Business Management, specify that it is a skill and not an occupation.
                 - Change the terms that you used or the order of your phrasing.
                 """
     return {
@@ -230,12 +232,11 @@ def no_result_answer(state:State)->State:
 
 def final_answer_generation(state:State)->State:
     """generation of the final answer"""
-
-    output = get_final_answer(query=state["user_query"],cypher_query=state.get("cypher_query","No information available."),context=state.get("cypher_result","No information available."),history=state["messages"][-5:])
-    
     return {
-        "output":output.content[0]["text"]
+        "output":get_final_answer(query=state["user_query"],cypher_query=state.get("cypher_query","No information available."),context=state.get("cypher_result","No information available."),history=state["messages"][-5:])
     }
+    
+
 
 def save(state:State)->State:
     """node to save session messages to neo4j and metadata to jsonl"""
@@ -243,6 +244,16 @@ def save(state:State)->State:
     history = get_memory(state["session_id"])
     history.add_user_message(state["user_query"])
     history.add_ai_message(state["output"])
+    
+    print("---interaction logs---")
+    print(f"Input: {state["user_query"]}")
+    print(f"Retrieved Entities:")
+    pprint(state["retrieved_entities"])
+    print("\n\n")
+    print(f"cypher: {state['cypher_query']}")
+    print(f"Cypher retries: {state['cypher_retry_count']}\n\n")
+    print(f"Context: {state["cypher_result"]}\n\n")
+    print(f"Output: {state['output']}")
 
     save_interaction(Interaction(
         session_id=state.get("session_id",""),
@@ -276,6 +287,7 @@ agent_graph.add_node("retry_cypher",cypher_retry)
 agent_graph.add_node("execute_cypher",cypher_execution)
 
 agent_graph.add_node("generate_final_answer",final_answer_generation)
+agent_graph.add_node("suggest_alternatives",alternatives_suggestion)
 agent_graph.add_node("no_result_answer",no_result_answer)
 agent_graph.add_node("save_data",save)
 
@@ -318,14 +330,15 @@ agent_graph.add_conditional_edges(
     "execute_cypher",
     cypher_result_validation,
     {
+        "cypher_ok":"generate_final_answer",
         "cypher_unsuccessful":"retry_cypher",
-        "max_retries":"no_result_answer",
-        "cypher_ok":"generate_final_answer"
+        "max_retries":"suggest_alternatives"
     }
 )
 
 agent_graph.add_edge("generate_final_answer","save_data")
 agent_graph.add_edge("no_result_answer","save_data")
+agent_graph.add_edge("suggest_alternatives","save_data")
 agent_graph.add_edge("save_data",END)
 
 app = agent_graph.compile()

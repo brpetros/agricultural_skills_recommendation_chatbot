@@ -29,16 +29,18 @@ consistency = GEval(
       evaluation_params=[SingleTurnParams.ACTUAL_OUTPUT]
 )
 
-with open("interactions_to_evaluate.json", "r", encoding="utf-8") as f:
-    interactions_to_evaluate = json.load(f)
 
-test_cases = [LLMTestCase(input=interaction["input"],
-                          actual_output=interaction["actual_output"],
-                          retrieval_context=interaction["retrieval_context"]
-                          ) 
-              for interaction in interactions_to_evaluate]
+def evaluation():
+      os.environ["DEEPEVAL_PER_TASK_TIMEOUT_SECONDS_OVERRIDE"] = "900"
+      os.environ["DEEPEVAL_RESULTS_FOLDER"] = "./single_evaluation"
+      with open("evaluation/interactions_to_evaluate.json", "r", encoding="utf-8") as f:
+            interactions_to_evaluate = json.load(f)
 
-
-
-evaluate(test_cases=test_cases,metrics=[answer_relevancy, faithfulness, clarity, consistency],async_config=AsyncConfig(max_concurrent=2))
+      test_cases = [LLMTestCase(input=interaction["input"],
+                              actual_output=interaction["actual_output"],
+                              retrieval_context=interaction["retrieval_context"]
+                              ) 
+                  for interaction in interactions_to_evaluate]
+      
+      evaluate(test_cases=test_cases,metrics=[answer_relevancy, faithfulness, clarity, consistency],async_config=AsyncConfig(max_concurrent=2))
 

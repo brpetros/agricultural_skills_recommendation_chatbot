@@ -11,5 +11,7 @@ llm = ChatGoogleGenerativeAI(
 )
 
 embeddings = OpenAIEmbeddings(
-    model="text-embedding-ada-002"
+    model="text-embedding-ada-002",
+    api_key=st.secrets["OPENAI_API_KEY"]
 )
+

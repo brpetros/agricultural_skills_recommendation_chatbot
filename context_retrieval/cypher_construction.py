@@ -1,5 +1,5 @@
 from typing import List
-from skills_graph import graph 
+from graph_db import graph 
 from llm import llm
 from langchain_neo4j import GraphCypherQAChain
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -23,12 +23,23 @@ original_cypher_prompt = ChatPromptTemplate.from_messages([
         # GRAPH SCHEMA
         {schema}
 
-        # EXTRACTED ENTITIES
+        # EXTRACTED CANDIDATE ENTITIES 
+        The following is a dictionary, where:
+        - Each key is a segment of the user's query representing an entity that could be a skill, an occupation, a job offer or a location
+        - Each value is a list of candidate entities retrieved for that phrase.
+        - Each candidate has: label, description, type, id, score
+
         {entities}
 
+        
+        PROCESS:
+        1. Treat each entity key independently as a semantic query.
+        2. From each list, select the ONE entity that best matches the user's intent, as you can find it in the user's question.
+        3. Construct the cypher based on the selected entities and the user's question. Prefer entity.id if available for Cypher matching.
+
         STRICT REQUIREMENTS:
+        - Only one candidate per key should be chosen 
         - The cypher search query should be based only on the information from the retrieved entities that are relevant to the user's query. 
-        - Each entity contains the original user's input, which was used for the entity to be retrieved. Use this to relate the user's question with the retrieved entities.
         - Prefer entity IDs when available.
         - Output ONLY the Cypher query. Do NOT wrap it in markdown code blocks, do NOT write markdown formatting, and do NOT explain anything.
         - Ensure all labels, relationships, and properties exist in the schema.
@@ -81,7 +92,11 @@ retry_cypher_prompt = ChatPromptTemplate.from_messages([
         # GRAPH SCHEMA
         {schema}
 
-        # EXTRACTED ENTITIES
+        # EXTRACTED CANDIDATE ENTITIES
+        The following is a dictionary, where:
+        - Each key is a segment of the user's query representing an entity that could be a skill, an occupation, a job or a location
+        - Each value is a list of candidate entities retrieved for that phrase.
+        - Each candidate has: label, description, type, id, score
         {entities}
 
         # PREVIOUS FAILED CYPHER QUERY
@@ -90,19 +105,27 @@ retry_cypher_prompt = ChatPromptTemplate.from_messages([
         # ERROR MESSAGE OR EXECUTION FAILURE
         {error}
 
-        # TASK
-        Analyze why the previous query failed or returned no results, and generate a corrected Cypher query.
+        # MANDATORY CRITICAL FALLBACK STRATEGY (IF PREVIOUS QUERY RETURNED NO RESULTS)
+        If the previous query failed because it returned 0 results ("No relevant data was found...")
+        - if the user asks about specific jobs, vacancies, or hiring positions, YOU MUST BROADEN THE SCOPE TO OCCUPATIONS.
+            Specific job vacancies are highly volatile, whereas generalized ESCO Occupations are stable.
+        - if the user's question' contains very specific requirements and no results are found, use `OPTIONAL MATCH` for the requirements to broaden the scope 
+        
+        - CRITICAL RULE: If matching `(j:Job)` yielded nothing, rewrite the query to match `(o:Occupation)` using the same candidate skills/terms.
+        - EXAMPLE SHIFT: 
+          Instead of failing on: `MATCH (j:Job)-[:REQUIRES]->(s:Skill {{name: "Python"}})`
+          Fallback to matching: `MATCH (o:Occupation)-[:REQUIRES]->(s:Skill {{name: "Python"}})`
+        - ALTERNATIVELY: Use an `OPTIONAL MATCH` or check both nodes so that if no specific `Job` matches, general `Occupation` details are still returned.
 
-        Common failure causes to check:
+        # OTHER COMMON FAILURE CAUSES TO CHECK
         1. REVERSED RELATIONSHIPS: The arrow in the relationship pattern went the wrong way (e.g., `(a)<-[:REL]-(b)` instead of `(a)-[:REL]->(b)`). Check the # GRAPH SCHEMA directions carefully!
-        2. OVERCONSTRAINED FILTERS: A property match was too specific or misspelled.
-        3. SYNTAX ISSUES: Misplaced brackets, invalid clauses, or undeclared variables.
-        4. SCHEMA MISMATCH: Using labels, relationships, or properties not explicitly declared in the schema.
+        2. OVERCONSTRAINED FILTERS: A property match was too specific, misspelled, or combined too many strict `AND` conditions. 
+        3. WRONG ENTITY CHOICE FROM CANDIDATES: Check if you picked a hyper-specific candidate string when a broader one exists.
+        4. SYNTAX ISSUES: Misplaced brackets, invalid clauses, or undeclared variables.
+        5. SCHEMA MISMATCH: Using labels, relationships, or properties not explicitly declared in the schema.
 
-        Correction strategy:
-        - Align query pattern directions perfectly with the schema.
-        - If relationship direction is causing the failure, use an undirected relationship (e.g., `(a)-[:REL_TYPE]-(b)`) to bypass directional strictness safely.
-        - Simplify overly complex conditions.
+        # OUTPUT INSTRUCTIONS
+        - Align query pattern directions perfectly with the schema. If relationship direction is tricky, use an undirected relationship (e.g., `(a)-[:REL_TYPE]-(b)`).
         - Return ONLY the corrected Cypher query. Do NOT wrap it in markdown code blocks and do NOT explain anything.
         - Do NOT make the query return whole nodes when they include embedding properties like titleEmbedding, labelEmbedding or descriptionEmbedding.
         - RESOLUTION STRATEGY: If you need to see the history, scan the conversation history backward, starting from the IMMEDIATELY PRECEDING MESSAGE (the very last assistant turn) up to the oldest.
