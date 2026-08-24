@@ -74,7 +74,7 @@ GOOGLE_API_KEY="your_openai_api_key"
 ## 7. Run the Application
 
 ```bash
-streamlit run app.py
+streamlit run chatbot.py
 ```
 
 ---
