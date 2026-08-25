@@ -46,19 +46,17 @@ pip install -r requirements.txt
 
 ## 6. Configure the Secret Keys
 
-Rename:
-
-```text
-.streamlit/secrets.toml.example
-```
-
-to:
+Create a toml file for secret keys:
 
 ```text
 .streamlit/secrets.toml
 ```
 
-Then add the required secret keys and credentials inside the file.
+Then add the required secret keys and credentials inside the file, as found in:
+
+```text
+.streamlit/secrets.toml.example
+```
 
 Example:
 
@@ -66,7 +64,7 @@ Example:
 NEO4J_URI="your_neo4j_uri"
 NEO4J_USERNAME="your_username"
 NEO4J_PASSWORD="your_password"
-GOOGLE_API_KEY="your_openai_api_key"
+GOOGLE_API_KEY="your_google_api_key"
 ```
 
 ---
